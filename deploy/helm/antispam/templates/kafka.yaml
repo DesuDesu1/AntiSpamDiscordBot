@@ -38,6 +38,8 @@ spec:
               value: "PLAINTEXT"
             - name: CLUSTER_ID
               value: "MkU3OEVBNTcwNTJENDM2Qk"
+            - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+              value: "true"
             - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
               value: "1"
           volumeMounts:
