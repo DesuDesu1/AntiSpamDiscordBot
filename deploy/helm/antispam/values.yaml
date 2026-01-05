@@ -1,14 +1,14 @@
 # Images
 gateway:
   image:
-    repository: ghcr.io/your-username/antispam-gateway
+    repository: ghcr.io/desudesu1/antispam-gateway
     tag: latest
     pullPolicy: Always
   replicaCount: 1
 
 bot:
   image:
-    repository: ghcr.io/your-username/antispam-bot
+    repository: ghcr.io/desudesu1/antispam-bot
     tag: latest
     pullPolicy: Always
   replicaCount: 1
