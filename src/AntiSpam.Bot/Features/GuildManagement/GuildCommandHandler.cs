@@ -43,7 +43,7 @@ public class GuildCommandHandler
             📊 **Anti-Spam Settings**
             
             Protection: {(config.IsEnabled ? "✅ Enabled" : "❌ Disabled")}
-            Alert Channel: {(config.AlertChannelId.HasValue ? $"<#{config.AlertChannelId}>" : "Not set")}
+            Alert Channel: {(config.AlertChannelId.HasValue ? $"<#{config.AlertChannelId.Value}>" : "Not set")}
             
             **Detection:**
             • Min channels: {config.MinChannelsForSpam}
