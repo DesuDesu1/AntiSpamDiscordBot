@@ -87,6 +87,9 @@ public class DiscordService
 
     public async Task BulkDeleteMessagesAsync(ulong guildId, List<(ulong ChannelId, ulong MessageId)> messages)
     {
+        var guild = await _client.GetGuildAsync(guildId);
+        if (guild == null) return;
+        
         var deletedCount = 0;
         var byChannel = messages.GroupBy(m => m.ChannelId);
         
@@ -94,7 +97,9 @@ public class DiscordService
         {
             try
             {
-                var channel = await _client.GetChannelAsync(group.Key) as ITextChannel;
+                // Get all channels and find the one we need
+                var channels = await guild.GetChannelsAsync();
+                var channel = channels.FirstOrDefault(c => c.Id == group.Key) as ITextChannel;
                 if (channel == null) continue;
                 
                 var messageIds = group.Select(m => m.MessageId).ToArray();
@@ -126,16 +131,27 @@ public class DiscordService
             _logger.LogInformation("Attempting to send alert to channel {ChannelId} in guild {GuildId}", 
                 channelId, guildId);
             
-            // Get channel directly via REST API
-            var channelObj = await _client.GetChannelAsync(channelId);
-            _logger.LogInformation("GetChannelAsync returned: {Type}", channelObj?.GetType().Name ?? "null");
-            
-            if (channelObj is not ITextChannel channel)
+            var guild = await _client.GetGuildAsync(guildId);
+            if (guild == null)
             {
-                _logger.LogWarning("Channel {ChannelId} is not a text channel or not found. Type: {Type}", 
-                    channelId, channelObj?.GetType().Name ?? "null");
+                _logger.LogWarning("Guild {GuildId} not found", guildId);
                 return;
             }
+            
+            // Get all channels from guild and find the target channel
+            var channels = await guild.GetChannelsAsync();
+            _logger.LogInformation("Found {Count} channels in guild", channels.Count);
+            
+            var channel = channels.FirstOrDefault(c => c.Id == channelId) as ITextChannel;
+            if (channel == null)
+            {
+                _logger.LogWarning("Channel {ChannelId} not found among {Count} channels. Available: {Channels}", 
+                    channelId, channels.Count, 
+                    string.Join(", ", channels.Select(c => $"{c.Name}({c.Id})")));
+                return;
+            }
+            
+            _logger.LogInformation("Found channel: {ChannelName}", channel.Name);
 
             var embed = new EmbedBuilder()
                 .WithTitle("🚨 Spam Detected")
@@ -186,7 +202,11 @@ public class DiscordService
 
         try
         {
-            var channel = await _client.GetChannelAsync(incident.AlertChannelId.Value) as ITextChannel;
+            var guild = await _client.GetGuildAsync(guildId);
+            if (guild == null) return;
+            
+            var channels = await guild.GetChannelsAsync();
+            var channel = channels.FirstOrDefault(c => c.Id == incident.AlertChannelId.Value) as ITextChannel;
             if (channel == null) return;
 
             var message = await channel.GetMessageAsync(incident.AlertMessageId.Value) as IUserMessage;
