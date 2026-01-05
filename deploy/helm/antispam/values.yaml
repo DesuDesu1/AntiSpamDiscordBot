@@ -22,7 +22,7 @@ kafka:
   enabled: true
   replicaCount: 1
   storage: 5Gi
-  bootstrapServers: "kafka:9092"
+  bootstrapServers: "antispam-kafka:9092"
 
 # Redis
 redis:
