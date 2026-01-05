@@ -1,0 +1,55 @@
+# Images
+gateway:
+  image:
+    repository: ghcr.io/your-username/antispam-gateway
+    tag: latest
+    pullPolicy: Always
+  replicaCount: 1
+
+bot:
+  image:
+    repository: ghcr.io/your-username/antispam-bot
+    tag: latest
+    pullPolicy: Always
+  replicaCount: 1
+
+# Discord
+discord:
+  token: ""  # Set via --set or secrets
+
+# Kafka
+kafka:
+  enabled: true
+  replicaCount: 1
+  storage: 5Gi
+  bootstrapServers: "kafka:9092"
+
+# Redis
+redis:
+  enabled: true
+  storage: 1Gi
+
+# PostgreSQL
+postgresql:
+  enabled: true
+  storage: 5Gi
+  database: antispam
+  username: antispam
+  password: ""  # Set via --set or secrets
+
+# Resources
+resources:
+  gateway:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  bot:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 200m
+      memory: 256Mi

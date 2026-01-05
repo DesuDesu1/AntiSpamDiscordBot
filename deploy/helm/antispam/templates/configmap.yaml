@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+data:
+  KAFKA_BOOTSTRAP_SERVERS: {{ .Values.kafka.bootstrapServers | quote }}
+  REDIS_CONNECTION: "{{ .Release.Name }}-redis:6379"
+  POSTGRES_HOST: "{{ .Release.Name }}-postgresql"
+  POSTGRES_DATABASE: {{ .Values.postgresql.database | quote }}
+  POSTGRES_USERNAME: {{ .Values.postgresql.username | quote }}
