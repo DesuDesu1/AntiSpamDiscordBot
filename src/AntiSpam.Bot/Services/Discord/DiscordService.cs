@@ -87,16 +87,14 @@ public class DiscordService
 
     public async Task BulkDeleteMessagesAsync(ulong guildId, List<(ulong ChannelId, ulong MessageId)> messages)
     {
-        var guild = await _client.GetGuildAsync(guildId);
         var deletedCount = 0;
-        
         var byChannel = messages.GroupBy(m => m.ChannelId);
         
         foreach (var group in byChannel)
         {
             try
             {
-                var channel = await guild.GetTextChannelAsync(group.Key);
+                var channel = await _client.GetChannelAsync(group.Key) as ITextChannel;
                 if (channel == null) continue;
                 
                 var messageIds = group.Select(m => m.MessageId).ToArray();
@@ -125,17 +123,17 @@ public class DiscordService
     {
         try
         {
-            var guild = await _client.GetGuildAsync(guildId);
-            if (guild == null)
-            {
-                _logger.LogWarning("Guild {GuildId} not found for alert", guildId);
-                return;
-            }
+            _logger.LogInformation("Attempting to send alert to channel {ChannelId} in guild {GuildId}", 
+                channelId, guildId);
             
-            var channel = await guild.GetTextChannelAsync(channelId);
-            if (channel == null)
+            // Get channel directly via REST API
+            var channelObj = await _client.GetChannelAsync(channelId);
+            _logger.LogInformation("GetChannelAsync returned: {Type}", channelObj?.GetType().Name ?? "null");
+            
+            if (channelObj is not ITextChannel channel)
             {
-                _logger.LogWarning("Alert channel {ChannelId} not found in guild {GuildId}", channelId, guildId);
+                _logger.LogWarning("Channel {ChannelId} is not a text channel or not found. Type: {Type}", 
+                    channelId, channelObj?.GetType().Name ?? "null");
                 return;
             }
 
@@ -161,6 +159,8 @@ public class DiscordService
 
             var alertMessage = await channel.SendMessageAsync(embed: embed, components: components);
             
+            _logger.LogInformation("Alert message sent with ID {MessageId}", alertMessage.Id);
+            
             await using var db = await _dbFactory.CreateDbContextAsync();
             var dbIncident = await db.SpamIncidents.FindAsync(incident.Id);
             if (dbIncident != null)
@@ -174,7 +174,8 @@ public class DiscordService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to send alert for incident #{Id}", incident.Id);
+            _logger.LogError(ex, "Failed to send alert for incident #{Id} to channel {ChannelId}", 
+                incident.Id, channelId);
         }
     }
 
@@ -185,10 +186,7 @@ public class DiscordService
 
         try
         {
-            var guild = await _client.GetGuildAsync(guildId);
-            if (guild == null) return;
-            
-            var channel = await guild.GetTextChannelAsync(incident.AlertChannelId.Value);
+            var channel = await _client.GetChannelAsync(incident.AlertChannelId.Value) as ITextChannel;
             if (channel == null) return;
 
             var message = await channel.GetMessageAsync(incident.AlertMessageId.Value) as IUserMessage;
