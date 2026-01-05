@@ -1,16 +1,22 @@
 using AntiSpam.Bot.Services;
 using System.Text.Json;
+using Discord.Rest;
 
 namespace AntiSpam.Bot.Features.GuildManagement;
 
 public class GuildCommandHandler
 {
     private readonly GuildConfigService _configService;
+    private readonly DiscordRestClient _discord;
     private readonly ILogger<GuildCommandHandler> _logger;
 
-    public GuildCommandHandler(GuildConfigService configService, ILogger<GuildCommandHandler> logger)
+    public GuildCommandHandler(
+        GuildConfigService configService, 
+        DiscordRestClient discord,
+        ILogger<GuildCommandHandler> logger)
     {
         _configService = configService;
+        _discord = discord;
         _logger = logger;
     }
 
@@ -85,11 +91,27 @@ public class GuildCommandHandler
     {
         var config = await _configService.GetOrCreateAsync(guildId);
         
+        // Get channel name if set
+        string alertChannelDisplay = "Not set";
+        if (config.AlertChannelId.HasValue)
+        {
+            try
+            {
+                var guild = await _discord.GetGuildAsync(guildId);
+                var channel = await guild.GetTextChannelAsync(config.AlertChannelId.Value);
+                alertChannelDisplay = $"#{channel?.Name ?? config.AlertChannelId.Value.ToString()}";
+            }
+            catch
+            {
+                alertChannelDisplay = $"ID: {config.AlertChannelId.Value}";
+            }
+        }
+        
         return $"""
             📊 **Anti-Spam Settings**
             
             Protection: {(config.IsEnabled ? "✅ Enabled" : "❌ Disabled")}
-            Alert Channel: {(config.AlertChannelId.HasValue ? $"<#{config.AlertChannelId.Value}>" : "Not set")}
+            Alert Channel: {alertChannelDisplay}
             
             **Detection:**
             • Min channels: {config.MinChannelsForSpam}
@@ -112,7 +134,18 @@ public class GuildCommandHandler
     {
         _logger.LogInformation("Setting alert channel {ChannelId} for guild {GuildId}", channelId, guildId);
         await _configService.SetAlertChannelAsync(guildId, channelId);
-        return $"✅ Alert channel set to <#{channelId}>";
+        
+        // Get channel name for display
+        try
+        {
+            var guild = await _discord.GetGuildAsync(guildId);
+            var channel = await guild.GetTextChannelAsync(channelId);
+            return $"✅ Alert channel set to #{channel?.Name ?? channelId.ToString()}";
+        }
+        catch
+        {
+            return $"✅ Alert channel set (ID: {channelId})";
+        }
     }
 
     private async Task<string> HandleMinChannelsAsync(ulong guildId, int count)

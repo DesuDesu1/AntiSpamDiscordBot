@@ -120,7 +120,12 @@ public class CommandConsumerWorker : BackgroundService
         var applicationId = _discord.CurrentUser.Id;
         var url = $"https://discord.com/api/v10/webhooks/{applicationId}/{token}";
         
-        var payload = JsonSerializer.Serialize(new { content = message, flags = 64 }); // 64 = ephemeral
+        var payload = JsonSerializer.Serialize(new 
+        { 
+            content = message, 
+            flags = 64, // ephemeral
+            allowed_mentions = new { parse = new[] { "users", "roles", "everyone" } }
+        });
         var content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
         
         var response = await _http.PostAsync(url, content);
