@@ -152,7 +152,7 @@ public class DiscordGatewayWorker : BackgroundService
     private static object ConvertOptionValue(object? value)
     {
         if (value is null) return "";
-        if (value is ISnowflakeEntity entity) return entity.Id;
+        if (value is ISnowflakeEntity entity) return entity.Id.ToString();
         if (value is bool or string or int or long or double or ulong or float) return value;
         return value.ToString() ?? "";
     }
