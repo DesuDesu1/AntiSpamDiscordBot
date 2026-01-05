@@ -1,4 +1,5 @@
 using AntiSpam.Bot.Data;
+using AntiSpam.Bot.Features.GuildManagement;
 using AntiSpam.Bot.Features.Moderation;
 using AntiSpam.Bot.Features.SpamDetection;
 using AntiSpam.Bot.Services.Cache;
@@ -15,7 +16,6 @@ var builder = Host.CreateApplicationBuilder(args);
 var pgConnectionString = builder.Configuration.GetConnectionString("Database");
 if (string.IsNullOrEmpty(pgConnectionString))
 {
-    // Build from individual components (K8s environment)
     var pgHost = builder.Configuration["Postgres:Host"] ?? "localhost";
     var pgDatabase = builder.Configuration["Postgres:Database"] ?? "antispam";
     var pgUsername = builder.Configuration["Postgres:Username"] ?? "antispam";
@@ -30,7 +30,7 @@ if (string.IsNullOrEmpty(redisConnectionString))
     redisConnectionString = builder.Configuration["Redis:ConnectionString"] ?? "localhost:6379";
 }
 
-// PostgreSQL + EF Core (factory for singleton services)
+// PostgreSQL + EF Core
 builder.Services.AddDbContextFactory<BotDbContext>(options =>
     options.UseNpgsql(pgConnectionString));
 
@@ -70,9 +70,14 @@ builder.Services.AddSingleton<SpamDetector>();
 builder.Services.AddSingleton<DiscordService>();
 builder.Services.AddSingleton<SpamActionService>();
 
+// Guild management
+builder.Services.AddSingleton<GuildConfigService>();
+builder.Services.AddSingleton<GuildCommandHandler>();
+
 // Workers
 builder.Services.AddHostedService<MessageConsumerWorker>();
 builder.Services.AddHostedService<InteractionConsumerWorker>();
+builder.Services.AddHostedService<CommandConsumerWorker>();
 
 var app = builder.Build();
 

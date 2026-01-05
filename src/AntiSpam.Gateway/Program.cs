@@ -54,9 +54,11 @@ public class DiscordGatewayWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _client.Log += LogAsync;
+        _client.Ready += OnReadyAsync;
         _client.MessageReceived += OnMessageReceivedAsync;
         _client.ButtonExecuted += OnButtonExecutedAsync;
         _client.ReactionAdded += OnReactionAddedAsync;
+        _client.SlashCommandExecuted += OnSlashCommandExecutedAsync;
 
         var token = _config["Discord:Token"] 
             ?? throw new InvalidOperationException("Discord:Token not configured");
@@ -67,6 +69,117 @@ public class DiscordGatewayWorker : BackgroundService
         _logger.LogInformation("Discord Gateway started");
 
         await Task.Delay(Timeout.Infinite, stoppingToken);
+    }
+
+    private async Task OnReadyAsync()
+    {
+        _logger.LogInformation("Bot is ready! Registering slash commands...");
+        
+        // Register global slash commands
+        var antispamCommand = new SlashCommandBuilder()
+            .WithName("antispam")
+            .WithDescription("Anti-spam bot configuration")
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("status")
+                .WithDescription("Show current anti-spam settings")
+                .WithType(ApplicationCommandOptionType.SubCommand))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("enable")
+                .WithDescription("Enable or disable anti-spam protection")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption("enabled", ApplicationCommandOptionType.Boolean, "Enable protection", isRequired: true))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("alert-channel")
+                .WithDescription("Set the channel for spam alerts")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption("channel", ApplicationCommandOptionType.Channel, "Alert channel", isRequired: true))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("min-channels")
+                .WithDescription("Minimum channels for spam detection (2-10)")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption("count", ApplicationCommandOptionType.Integer, "Number of channels", isRequired: true, minValue: 2, maxValue: 10))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("similarity")
+                .WithDescription("Text similarity threshold (50-100%)")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption("percent", ApplicationCommandOptionType.Integer, "Similarity percentage", isRequired: true, minValue: 50, maxValue: 100))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("window")
+                .WithDescription("Detection time window in seconds (30-600)")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption("seconds", ApplicationCommandOptionType.Integer, "Time window", isRequired: true, minValue: 30, maxValue: 600))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("mute")
+                .WithDescription("Configure mute on spam detection")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption("enabled", ApplicationCommandOptionType.Boolean, "Enable mute", isRequired: true)
+                .AddOption("duration", ApplicationCommandOptionType.Integer, "Duration in minutes (1-1440)", isRequired: false, minValue: 1, maxValue: 1440))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("delete")
+                .WithDescription("Configure automatic message deletion")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption("enabled", ApplicationCommandOptionType.Boolean, "Enable deletion", isRequired: true))
+            .WithDefaultMemberPermissions(GuildPermission.ManageGuild);
+
+        try
+        {
+            // For testing: register to specific guild (instant)
+            var testGuildId = _config["Discord:TestGuildId"];
+            if (!string.IsNullOrEmpty(testGuildId))
+            {
+                var guild = _client.GetGuild(ulong.Parse(testGuildId));
+                if (guild != null)
+                {
+                    await guild.CreateApplicationCommandAsync(antispamCommand.Build());
+                    _logger.LogInformation("Registered slash commands to test guild {GuildId}", testGuildId);
+                }
+            }
+            else
+            {
+                // Register globally (can take up to 1 hour)
+                await _client.CreateGlobalApplicationCommandAsync(antispamCommand.Build());
+                _logger.LogInformation("Registered global slash commands");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to register slash commands");
+        }
+    }
+
+    private async Task OnSlashCommandExecutedAsync(SocketSlashCommand command)
+    {
+        if (command.CommandName != "antispam") return;
+        if (command.GuildId == null) return;
+
+        // Forward to Kafka for processing by Bot
+        var subCommand = command.Data.Options.First();
+        var options = subCommand.Options?.ToDictionary(
+            o => o.Name, 
+            o => o.Value) ?? new Dictionary<string, object>();
+
+        var @event = new SlashCommandEvent
+        {
+            EventId = Guid.NewGuid(),
+            Timestamp = DateTimeOffset.UtcNow,
+            GuildId = command.GuildId.Value,
+            ChannelId = command.Channel.Id,
+            UserId = command.User.Id,
+            Username = command.User.Username,
+            CommandName = command.CommandName,
+            SubCommandName = subCommand.Name,
+            Options = options,
+            InteractionId = command.Id,
+            InteractionToken = command.Token
+        };
+
+        await PublishAsync(KafkaTopics.Commands, command.GuildId.Value.ToString(), @event);
+        
+        // Defer response - Bot will respond via webhook
+        await command.DeferAsync(ephemeral: true);
+        
+        _logger.LogInformation("Slash command /{Command} {SubCommand} from {User} in guild {Guild}", 
+            command.CommandName, subCommand.Name, command.User.Username, command.GuildId);
     }
 
     private async Task OnMessageReceivedAsync(SocketMessage message)
@@ -98,7 +211,6 @@ public class DiscordGatewayWorker : BackgroundService
     {
         if (component.GuildId == null) return;
         
-        // Immediately acknowledge the button
         await component.DeferAsync();
         
         var @event = new InteractionEvent
@@ -125,15 +237,11 @@ public class DiscordGatewayWorker : BackgroundService
         Cacheable<IMessageChannel, ulong> channel, 
         SocketReaction reaction)
     {
-        // Ignore bot reactions
         if (reaction.UserId == _client.CurrentUser?.Id) return;
-        
-        // Only process in guilds
         if (channel.Value is not SocketGuildChannel guildChannel) return;
 
-        // Only process specific emoji: 🔨 (ban) or ✅ (release)
         var emote = reaction.Emote.Name;
-        if (emote != "🔨" && emote != "✅") return;
+        if (emote != "��" && emote != "✅") return;
 
         var @event = new InteractionEvent
         {
