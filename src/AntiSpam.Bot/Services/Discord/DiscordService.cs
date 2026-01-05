@@ -27,11 +27,45 @@ public class DiscordService
         try
         {
             var guild = await _client.GetGuildAsync(guildId);
-            var user = await guild.GetUserAsync(userId);
+            if (guild == null)
+            {
+                _logger.LogWarning("Guild {GuildId} not found", guildId);
+                return;
+            }
             
+            var user = await guild.GetUserAsync(userId);
             if (user == null)
             {
                 _logger.LogWarning("User {UserId} not found in guild {GuildId}", userId, guildId);
+                return;
+            }
+
+            // Get bot's user to check permissions
+            var botUser = await guild.GetCurrentUserAsync();
+            _logger.LogInformation(
+                "Bot permissions in guild {GuildId}: Admin={Admin}, ModerateMembers={Moderate}, ManageRoles={ManageRoles}",
+                guildId,
+                botUser.GuildPermissions.Administrator,
+                botUser.GuildPermissions.ModerateMembers,
+                botUser.GuildPermissions.ManageRoles);
+            
+            // Check role hierarchy
+            var botHighestRole = botUser.RoleIds.Count > 0 
+                ? guild.Roles.Where(r => botUser.RoleIds.Contains(r.Id)).Max(r => r.Position) 
+                : 0;
+            var userHighestRole = user.RoleIds.Count > 0 
+                ? guild.Roles.Where(r => user.RoleIds.Contains(r.Id)).Max(r => r.Position) 
+                : 0;
+            
+            _logger.LogInformation(
+                "Role hierarchy - Bot highest: {BotRole}, User highest: {UserRole}",
+                botHighestRole, userHighestRole);
+            
+            if (userHighestRole >= botHighestRole)
+            {
+                _logger.LogWarning(
+                    "Cannot mute user {UserId} - their role ({UserRole}) is >= bot's role ({BotRole})",
+                    userId, userHighestRole, botHighestRole);
                 return;
             }
 
