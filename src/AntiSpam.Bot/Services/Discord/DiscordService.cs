@@ -41,13 +41,11 @@ public class DiscordService
             }
 
             await user.ModifyAsync(x => x.TimedOutUntil = DateTimeOffset.UtcNow.Add(duration));
-            
-            _logger.LogInformation("Muted user {UserId} in guild {GuildId} for {Duration}", 
-                userId, guildId, duration);
+            _logger.LogInformation("Muted user {UserId} for {Duration}", userId, duration);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to mute user {UserId} in guild {GuildId}", userId, guildId);
+            _logger.LogError(ex, "Failed to mute user {UserId}", userId);
         }
     }
 
@@ -60,18 +58,13 @@ public class DiscordService
             
             if (user != null && user.TimedOutUntil.HasValue && user.TimedOutUntil.Value > DateTimeOffset.UtcNow)
             {
-                // Set timeout to now to effectively remove it
                 await user.ModifyAsync(x => x.TimedOutUntil = DateTimeOffset.UtcNow);
-                _logger.LogInformation("Unmuted user {UserId} in guild {GuildId}", userId, guildId);
-            }
-            else
-            {
-                _logger.LogInformation("User {UserId} is not currently muted", userId);
+                _logger.LogInformation("Unmuted user {UserId}", userId);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to unmute user {UserId} in guild {GuildId}", userId, guildId);
+            _logger.LogError(ex, "Failed to unmute user {UserId}", userId);
         }
     }
 
@@ -81,12 +74,11 @@ public class DiscordService
         {
             var guild = await _client.GetGuildAsync(guildId);
             await guild.AddBanAsync(userId, 1, reason);
-            
-            _logger.LogInformation("Banned user {UserId} from guild {GuildId}", userId, guildId);
+            _logger.LogInformation("Banned user {UserId}", userId);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to ban user {UserId} from guild {GuildId}", userId, guildId);
+            _logger.LogError(ex, "Failed to ban user {UserId}", userId);
         }
     }
 
@@ -102,7 +94,6 @@ public class DiscordService
         {
             try
             {
-                // Get all channels and find the one we need
                 var channels = await guild.GetChannelsAsync();
                 var channel = channels.FirstOrDefault(c => c.Id == group.Key) as ITextChannel;
                 if (channel == null) continue;
@@ -122,20 +113,18 @@ public class DiscordService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to bulk delete messages in channel {ChannelId}", group.Key);
+                _logger.LogWarning(ex, "Failed to delete messages in channel {ChannelId}", group.Key);
             }
         }
         
-        _logger.LogInformation("Bulk deleted {Count} messages in guild {GuildId}", deletedCount, guildId);
+        if (deletedCount > 0)
+            _logger.LogInformation("Deleted {Count} spam messages", deletedCount);
     }
 
     public async Task SendAlertAsync(ulong guildId, ulong channelId, SpamIncident incident, GuildConfig config)
     {
         try
         {
-            _logger.LogInformation("Attempting to send alert to channel {ChannelId} in guild {GuildId}", 
-                channelId, guildId);
-            
             var guild = await _client.GetGuildAsync(guildId);
             if (guild == null)
             {
@@ -143,20 +132,13 @@ public class DiscordService
                 return;
             }
             
-            // Get all channels from guild and find the target channel
             var channels = await guild.GetChannelsAsync();
-            _logger.LogInformation("Found {Count} channels in guild", channels.Count);
-            
             var channel = channels.FirstOrDefault(c => c.Id == channelId) as ITextChannel;
             if (channel == null)
             {
-                _logger.LogWarning("Channel {ChannelId} not found among {Count} channels. Available: {Channels}", 
-                    channelId, channels.Count, 
-                    string.Join(", ", channels.Select(c => $"{c.Name}({c.Id})")));
+                _logger.LogWarning("Alert channel {ChannelId} not found", channelId);
                 return;
             }
-            
-            _logger.LogInformation("Found channel: {ChannelName}", channel.Name);
 
             var embed = new EmbedBuilder()
                 .WithTitle("🚨 Spam Detected")
@@ -180,8 +162,6 @@ public class DiscordService
 
             var alertMessage = await channel.SendMessageAsync(embed: embed, components: components);
             
-            _logger.LogInformation("Alert message sent with ID {MessageId}", alertMessage.Id);
-            
             await using var db = await _dbFactory.CreateDbContextAsync();
             var dbIncident = await db.SpamIncidents.FindAsync(incident.Id);
             if (dbIncident != null)
@@ -191,12 +171,11 @@ public class DiscordService
                 await db.SaveChangesAsync();
             }
             
-            _logger.LogInformation("Sent alert for incident #{Id} to channel {ChannelId}", incident.Id, channelId);
+            _logger.LogInformation("Sent alert for incident #{Id}", incident.Id);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to send alert for incident #{Id} to channel {ChannelId}", 
-                incident.Id, channelId);
+            _logger.LogError(ex, "Failed to send alert for incident #{Id}", incident.Id);
         }
     }
 
@@ -240,7 +219,7 @@ public class DiscordService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to update alert message for incident #{Id}", incident.Id);
+            _logger.LogError(ex, "Failed to update alert for incident #{Id}", incident.Id);
         }
     }
 }
