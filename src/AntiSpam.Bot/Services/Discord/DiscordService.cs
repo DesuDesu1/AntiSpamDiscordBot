@@ -58,10 +58,15 @@ public class DiscordService
             var guild = await _client.GetGuildAsync(guildId);
             var user = await guild.GetUserAsync(userId);
             
-            if (user != null)
+            if (user != null && user.TimedOutUntil.HasValue && user.TimedOutUntil.Value > DateTimeOffset.UtcNow)
             {
-                await user.ModifyAsync(x => x.TimedOutUntil = null);
+                // Set timeout to now to effectively remove it
+                await user.ModifyAsync(x => x.TimedOutUntil = DateTimeOffset.UtcNow);
                 _logger.LogInformation("Unmuted user {UserId} in guild {GuildId}", userId, guildId);
+            }
+            else
+            {
+                _logger.LogInformation("User {UserId} is not currently muted", userId);
             }
         }
         catch (Exception ex)
