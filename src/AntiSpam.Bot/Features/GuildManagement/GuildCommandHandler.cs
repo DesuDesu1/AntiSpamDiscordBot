@@ -1,16 +1,14 @@
+using AntiSpam.Bot.Services;
+using System.Text.Json;
+
 namespace AntiSpam.Bot.Features.GuildManagement;
 
-/// <summary>
-/// Slash command handler for anti-spam configuration
-/// </summary>
 public class GuildCommandHandler
 {
     private readonly GuildConfigService _configService;
     private readonly ILogger<GuildCommandHandler> _logger;
 
-    public GuildCommandHandler(
-        GuildConfigService configService,
-        ILogger<GuildCommandHandler> logger)
+    public GuildCommandHandler(GuildConfigService configService, ILogger<GuildCommandHandler> logger)
     {
         _configService = configService;
         _logger = logger;
@@ -18,20 +16,68 @@ public class GuildCommandHandler
 
     public async Task<string> HandleCommandAsync(ulong guildId, string subCommand, Dictionary<string, object> options)
     {
-        _logger.LogInformation("Handling command {Command} for guild {Guild}", subCommand, guildId);
+        _logger.LogInformation("Handling command {Command} for guild {Guild} with options: {Options}", 
+            subCommand, guildId, string.Join(", ", options.Select(kv => $"{kv.Key}={kv.Value} ({kv.Value?.GetType().Name})")));
         
         return subCommand switch
         {
             "status" => await HandleStatusAsync(guildId),
-            "enable" => await HandleEnableAsync(guildId, (bool)options["enabled"]),
-            "alert-channel" => await HandleAlertChannelAsync(guildId, Convert.ToUInt64(options["channel"])),
-            "min-channels" => await HandleMinChannelsAsync(guildId, Convert.ToInt32(options["count"])),
-            "similarity" => await HandleSimilarityAsync(guildId, Convert.ToInt32(options["percent"])),
-            "window" => await HandleWindowAsync(guildId, Convert.ToInt32(options["seconds"])),
-            "mute" => await HandleMuteAsync(guildId, (bool)options["enabled"], 
-                options.TryGetValue("duration", out var d) ? Convert.ToInt32(d) : 60),
-            "delete" => await HandleDeleteAsync(guildId, (bool)options["enabled"]),
+            "enable" => await HandleEnableAsync(guildId, GetBool(options, "enabled")),
+            "alert-channel" => await HandleAlertChannelAsync(guildId, GetULong(options, "channel")),
+            "min-channels" => await HandleMinChannelsAsync(guildId, GetInt(options, "count")),
+            "similarity" => await HandleSimilarityAsync(guildId, GetInt(options, "percent")),
+            "window" => await HandleWindowAsync(guildId, GetInt(options, "seconds")),
+            "mute" => await HandleMuteAsync(guildId, GetBool(options, "enabled"), 
+                options.ContainsKey("duration") ? GetInt(options, "duration") : 60),
+            "delete" => await HandleDeleteAsync(guildId, GetBool(options, "enabled")),
             _ => "❌ Unknown command"
+        };
+    }
+
+    // Helper methods to extract values from JsonElement or primitive types
+    private static ulong GetULong(Dictionary<string, object> options, string key)
+    {
+        if (!options.TryGetValue(key, out var value)) return 0;
+        
+        return value switch
+        {
+            JsonElement je when je.ValueKind == JsonValueKind.Number => je.GetUInt64(),
+            JsonElement je when je.ValueKind == JsonValueKind.String => ulong.Parse(je.GetString()!),
+            ulong u => u,
+            long l => (ulong)l,
+            int i => (ulong)i,
+            string s => ulong.Parse(s),
+            _ => Convert.ToUInt64(value)
+        };
+    }
+
+    private static int GetInt(Dictionary<string, object> options, string key)
+    {
+        if (!options.TryGetValue(key, out var value)) return 0;
+        
+        return value switch
+        {
+            JsonElement je when je.ValueKind == JsonValueKind.Number => je.GetInt32(),
+            JsonElement je when je.ValueKind == JsonValueKind.String => int.Parse(je.GetString()!),
+            int i => i,
+            long l => (int)l,
+            string s => int.Parse(s),
+            _ => Convert.ToInt32(value)
+        };
+    }
+
+    private static bool GetBool(Dictionary<string, object> options, string key)
+    {
+        if (!options.TryGetValue(key, out var value)) return false;
+        
+        return value switch
+        {
+            JsonElement je when je.ValueKind == JsonValueKind.True => true,
+            JsonElement je when je.ValueKind == JsonValueKind.False => false,
+            JsonElement je when je.ValueKind == JsonValueKind.String => bool.Parse(je.GetString()!),
+            bool b => b,
+            string s => bool.Parse(s),
+            _ => Convert.ToBoolean(value)
         };
     }
 
@@ -64,8 +110,9 @@ public class GuildCommandHandler
 
     private async Task<string> HandleAlertChannelAsync(ulong guildId, ulong channelId)
     {
+        _logger.LogInformation("Setting alert channel {ChannelId} for guild {GuildId}", channelId, guildId);
         await _configService.SetAlertChannelAsync(guildId, channelId);
-        return $"✅ Alert channel set: <#{channelId}>";
+        return $"✅ Alert channel set to <#{channelId}>";
     }
 
     private async Task<string> HandleMinChannelsAsync(ulong guildId, int count)
@@ -73,36 +120,38 @@ public class GuildCommandHandler
         var success = await _configService.SetMinChannelsAsync(guildId, count);
         return success 
             ? $"✅ Minimum channels: {count}" 
-            : "❌ Value must be between 2 and 10";
+            : "❌ Count must be 2-10";
     }
 
     private async Task<string> HandleSimilarityAsync(ulong guildId, int percent)
     {
-        var success = await _configService.SetSimilarityThresholdAsync(guildId, percent / 100.0);
+        var success = await _configService.SetSimilarityThresholdAsync(guildId, percent);
         return success 
             ? $"✅ Similarity threshold: {percent}%" 
-            : "❌ Value must be between 50 and 100";
+            : "❌ Percent must be 50-100";
     }
 
     private async Task<string> HandleWindowAsync(ulong guildId, int seconds)
     {
         var success = await _configService.SetDetectionWindowAsync(guildId, seconds);
         return success 
-            ? $"✅ Detection window: {seconds} sec" 
-            : "❌ Value must be between 30 and 600";
+            ? $"✅ Detection window: {seconds}s" 
+            : "❌ Window must be 10-600 seconds";
     }
 
-    private async Task<string> HandleMuteAsync(ulong guildId, bool enabled, int duration)
+    private async Task<string> HandleMuteAsync(ulong guildId, bool enabled, int durationMinutes)
     {
-        var success = await _configService.SetMuteSettingsAsync(guildId, enabled, duration);
-        return success 
-            ? (enabled ? $"✅ Mute enabled: {duration} min" : "✅ Mute disabled") 
-            : "❌ Duration must be between 1 and 1440 minutes";
+        await _configService.SetMuteSettingsAsync(guildId, enabled, durationMinutes);
+        return enabled 
+            ? $"✅ Mute enabled ({durationMinutes} min)" 
+            : "❌ Mute disabled";
     }
 
     private async Task<string> HandleDeleteAsync(ulong guildId, bool enabled)
     {
         await _configService.SetDeleteMessagesAsync(guildId, enabled);
-        return enabled ? "✅ Message deletion enabled" : "✅ Message deletion disabled";
+        return enabled 
+            ? "✅ Auto-delete spam enabled" 
+            : "❌ Auto-delete spam disabled";
     }
 }
