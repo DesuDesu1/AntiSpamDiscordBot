@@ -66,7 +66,7 @@ public class DiscordGatewayWorker : BackgroundService
 
     private async Task OnMessageReceivedAsync(SocketMessage message)
     {
-        if (message.Author.IsBot || message is not SocketUserMessage)
+        if (message is not SocketUserMessage)
             return;
 
         if (message.Channel is not SocketGuildChannel guildChannel)
@@ -81,7 +81,9 @@ public class DiscordGatewayWorker : BackgroundService
             MessageId = message.Id,
             AuthorId = message.Author.Id,
             AuthorUsername = message.Author.Username,
-            Content = message.Content
+            Content = message.Content,
+            IsBot = message.Author.IsBot,
+            AttachmentCount = message.Attachments.Count
         };
 
         var json = JsonSerializer.Serialize(@event);

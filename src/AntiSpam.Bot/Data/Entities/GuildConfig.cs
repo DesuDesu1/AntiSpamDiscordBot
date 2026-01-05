@@ -1,0 +1,49 @@
+namespace AntiSpam.Bot.Data.Entities;
+
+public class GuildConfig
+{
+    public ulong GuildId { get; set; }
+    
+    /// <summary>
+    /// Канал для отправки алертов модераторам
+    /// </summary>
+    public ulong? AlertChannelId { get; set; }
+    
+    /// <summary>
+    /// Включена ли защита от спама
+    /// </summary>
+    public bool IsEnabled { get; set; } = true;
+    
+    /// <summary>
+    /// Минимум каналов для срабатывания (по умолчанию 3)
+    /// </summary>
+    public int MinChannelsForSpam { get; set; } = 3;
+    
+    /// <summary>
+    /// Окно времени для детекции (в секундах, по умолчанию 120 = 2 минуты)
+    /// </summary>
+    public int DetectionWindowSeconds { get; set; } = 120;
+    
+    /// <summary>
+    /// Порог похожести сообщений (0.0-1.0, по умолчанию 0.7 = 70%)
+    /// </summary>
+    public double SimilarityThreshold { get; set; } = 0.7;
+    
+    /// <summary>
+    /// Удалять сообщения при обнаружении спама
+    /// </summary>
+    public bool DeleteMessages { get; set; } = true;
+    
+    /// <summary>
+    /// Мутить пользователя при обнаружении спама
+    /// </summary>
+    public bool MuteOnSpam { get; set; } = true;
+    
+    /// <summary>
+    /// Длительность мута в минутах (по умолчанию 60)
+    /// </summary>
+    public int MuteDurationMinutes { get; set; } = 60;
+    
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? UpdatedAt { get; set; }
+}

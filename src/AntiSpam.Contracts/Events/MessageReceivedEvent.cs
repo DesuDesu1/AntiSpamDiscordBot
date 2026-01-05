@@ -12,4 +12,10 @@ public sealed record MessageReceivedEvent
     
     public required string AuthorUsername { get; init; }
     public required string Content { get; init; }
+    public bool IsBot { get; init; }
+    
+    /// <summary>
+    /// Количество вложений (картинки, файлы)
+    /// </summary>
+    public int AttachmentCount { get; init; }
 }
