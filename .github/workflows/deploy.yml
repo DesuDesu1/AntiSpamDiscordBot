@@ -60,25 +60,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Deploy to VPS
-        uses: appleboy/ssh-action@v1
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
         with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            cd /opt/antispam
-            
-            # Pull latest helm chart
-            git pull origin main || true
-            
-            # Update images
-            helm upgrade --install antispam ./deploy/helm/antispam \
-              --set gateway.image.repository=ghcr.io/desudesu1/antispam-gateway \
-              --set gateway.image.tag=${{ github.sha }} \
-              --set bot.image.repository=ghcr.io/desudesu1/antispam-bot \
-              --set bot.image.tag=${{ github.sha }} \
-              --set discord.token=${{ secrets.DISCORD_TOKEN }} \
-              --set postgresql.password=${{ secrets.POSTGRES_PASSWORD }} \
-              --namespace antispam \
-              --create-namespace
+          version: v3.14.0
+      
+      - name: Setup kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG }}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+      
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install antispam ./deploy/helm/antispam \
+            --set gateway.image.repository=ghcr.io/desudesu1/antispam-gateway \
+            --set gateway.image.tag=${{ github.sha }} \
+            --set bot.image.repository=ghcr.io/desudesu1/antispam-bot \
+            --set bot.image.tag=${{ github.sha }} \
+            --set discord.token=${{ secrets.DISCORD_TOKEN }} \
+            --set postgresql.password=${{ secrets.POSTGRES_PASSWORD }} \
+            --namespace antispam \
+            --create-namespace
