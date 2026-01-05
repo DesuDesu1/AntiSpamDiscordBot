@@ -2,22 +2,23 @@ using AntiSpam.Bot.Data;
 using AntiSpam.Bot.Data.Entities;
 using Discord;
 using Discord.Rest;
+using Microsoft.EntityFrameworkCore;
 
 namespace AntiSpam.Bot.Services.Discord;
 
 public class DiscordService
 {
     private readonly DiscordRestClient _client;
-    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IDbContextFactory<BotDbContext> _dbFactory;
     private readonly ILogger<DiscordService> _logger;
 
     public DiscordService(
         DiscordRestClient client,
-        IServiceScopeFactory scopeFactory,
+        IDbContextFactory<BotDbContext> dbFactory,
         ILogger<DiscordService> logger)
     {
         _client = client;
-        _scopeFactory = scopeFactory;
+        _dbFactory = dbFactory;
         _logger = logger;
     }
 
@@ -136,23 +137,79 @@ public class DiscordService
                     ? incident.Content[..200] + "..." 
                     : incident.Content)
                 .AddField("Channels", string.Join(", ", incident.ChannelIds.Select(id => $"<#{id}>")))
+                .AddField("Actions", "🔨 Ban • ✅ Release (buttons or reactions)")
                 .WithFooter($"Incident #{incident.Id}")
                 .WithTimestamp(DateTimeOffset.UtcNow)
                 .Build();
 
             var components = new ComponentBuilder()
-                .WithButton("Ban", $"spam_ban_{incident.Id}", ButtonStyle.Danger)
-                .WithButton("Release", $"spam_release_{incident.Id}", ButtonStyle.Success)
+                .WithButton("Ban", $"spam_ban_{incident.Id}", ButtonStyle.Danger, new Emoji("🔨"))
+                .WithButton("Release", $"spam_release_{incident.Id}", ButtonStyle.Success, new Emoji("✅"))
                 .Build();
 
-            await channel.SendMessageAsync(embed: embed, components: components);
+            var alertMessage = await channel.SendMessageAsync(embed: embed, components: components);
             
-            _logger.LogInformation("Sent alert for incident #{Id} to channel {ChannelId}", 
-                incident.Id, channelId);
+            // Add reactions for alternative interaction
+            await alertMessage.AddReactionAsync(new Emoji("🔨"));
+            await alertMessage.AddReactionAsync(new Emoji("✅"));
+            
+            // Save alert message ID to incident
+            await using var db = await _dbFactory.CreateDbContextAsync();
+            var dbIncident = await db.SpamIncidents.FindAsync(incident.Id);
+            if (dbIncident != null)
+            {
+                dbIncident.AlertMessageId = alertMessage.Id;
+                dbIncident.AlertChannelId = channelId;
+                await db.SaveChangesAsync();
+            }
+            
+            _logger.LogInformation("Sent alert for incident #{Id} to channel {ChannelId}, message {MessageId}", 
+                incident.Id, channelId, alertMessage.Id);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to send alert for incident #{Id}", incident.Id);
+        }
+    }
+
+    public async Task UpdateAlertMessageAsync(SpamIncident incident, string action, string moderator)
+    {
+        if (incident.AlertMessageId == null || incident.AlertChannelId == null)
+            return;
+
+        try
+        {
+            var channel = await _client.GetChannelAsync(incident.AlertChannelId.Value) as ITextChannel;
+            if (channel == null) return;
+
+            var message = await channel.GetMessageAsync(incident.AlertMessageId.Value) as IUserMessage;
+            if (message == null) return;
+
+            var color = action == "Banned" ? Color.DarkRed : Color.Green;
+            var emoji = action == "Banned" ? "🔨" : "✅";
+
+            var embed = new EmbedBuilder()
+                .WithTitle($"{emoji} Spam Incident - {action}")
+                .WithColor(color)
+                .WithDescription($"**User:** <@{incident.UserId}> ({incident.Username})\n" +
+                                 $"**Status:** {action} by {moderator}")
+                .AddField("Content", incident.Content.Length > 200 
+                    ? incident.Content[..200] + "..." 
+                    : incident.Content)
+                .WithFooter($"Incident #{incident.Id}")
+                .WithTimestamp(DateTimeOffset.UtcNow)
+                .Build();
+
+            // Remove buttons after action
+            await message.ModifyAsync(m =>
+            {
+                m.Embed = embed;
+                m.Components = new ComponentBuilder().Build(); // Empty components
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update alert message for incident #{Id}", incident.Id);
         }
     }
 }

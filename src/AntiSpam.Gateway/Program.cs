@@ -11,7 +11,10 @@ builder.Services.AddSingleton<DiscordSocketClient>(_ =>
 {
     var config = new DiscordSocketConfig
     {
-        GatewayIntents = GatewayIntents.Guilds | GatewayIntents.GuildMessages | GatewayIntents.MessageContent
+        GatewayIntents = GatewayIntents.Guilds 
+            | GatewayIntents.GuildMessages 
+            | GatewayIntents.MessageContent
+            | GatewayIntents.GuildMessageReactions
     };
     return new DiscordSocketClient(config);
 });
@@ -52,6 +55,8 @@ public class DiscordGatewayWorker : BackgroundService
     {
         _client.Log += LogAsync;
         _client.MessageReceived += OnMessageReceivedAsync;
+        _client.ButtonExecuted += OnButtonExecutedAsync;
+        _client.ReactionAdded += OnReactionAddedAsync;
 
         var token = _config["Discord:Token"] 
             ?? throw new InvalidOperationException("Discord:Token not configured");
@@ -86,21 +91,80 @@ public class DiscordGatewayWorker : BackgroundService
             AttachmentCount = message.Attachments.Count
         };
 
-        var json = JsonSerializer.Serialize(@event);
-        var key = message.Author.Id.ToString();
+        await PublishAsync(KafkaTopics.Messages, message.Author.Id.ToString(), @event);
+    }
 
+    private async Task OnButtonExecutedAsync(SocketMessageComponent component)
+    {
+        if (component.GuildId == null) return;
+        
+        // Immediately acknowledge the button
+        await component.DeferAsync();
+        
+        var @event = new InteractionEvent
+        {
+            EventId = Guid.NewGuid(),
+            Timestamp = DateTimeOffset.UtcNow,
+            GuildId = component.GuildId.Value,
+            ChannelId = component.Channel.Id,
+            UserId = component.User.Id,
+            Username = component.User.Username,
+            Type = ModInteractionType.Button,
+            CustomId = component.Data.CustomId,
+            MessageId = component.Message.Id
+        };
+
+        await PublishAsync(KafkaTopics.Interactions, component.User.Id.ToString(), @event);
+        
+        _logger.LogInformation("Button {CustomId} clicked by {User}", 
+            component.Data.CustomId, component.User.Username);
+    }
+
+    private async Task OnReactionAddedAsync(
+        Cacheable<IUserMessage, ulong> message, 
+        Cacheable<IMessageChannel, ulong> channel, 
+        SocketReaction reaction)
+    {
+        // Ignore bot reactions
+        if (reaction.UserId == _client.CurrentUser?.Id) return;
+        
+        // Only process in guilds
+        if (channel.Value is not SocketGuildChannel guildChannel) return;
+
+        // Only process specific emoji: 🔨 (ban) or ✅ (release)
+        var emote = reaction.Emote.Name;
+        if (emote != "🔨" && emote != "✅") return;
+
+        var @event = new InteractionEvent
+        {
+            EventId = Guid.NewGuid(),
+            Timestamp = DateTimeOffset.UtcNow,
+            GuildId = guildChannel.Guild.Id,
+            ChannelId = channel.Id,
+            UserId = reaction.UserId,
+            Username = reaction.User.IsSpecified ? reaction.User.Value.Username : "Unknown",
+            Type = ModInteractionType.Reaction,
+            MessageId = message.Id,
+            Emoji = emote
+        };
+
+        await PublishAsync(KafkaTopics.Interactions, reaction.UserId.ToString(), @event);
+        
+        _logger.LogInformation("Reaction {Emoji} added by user {UserId} on message {MessageId}", 
+            emote, reaction.UserId, message.Id);
+    }
+
+    private async Task PublishAsync<T>(string topic, string key, T @event)
+    {
         try
         {
-            await _producer.ProduceAsync(
-                KafkaTopics.Messages,
-                new Message<string, string> { Key = key, Value = json });
-
-            _logger.LogDebug("Published message {MessageId} from {Author}", 
-                message.Id, message.Author.Username);
+            var json = JsonSerializer.Serialize(@event);
+            await _producer.ProduceAsync(topic, new Message<string, string> { Key = key, Value = json });
+            _logger.LogDebug("Published to {Topic}: {Key}", topic, key);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to publish message {MessageId}", message.Id);
+            _logger.LogError(ex, "Failed to publish to {Topic}", topic);
         }
     }
 

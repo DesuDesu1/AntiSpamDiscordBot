@@ -1,4 +1,5 @@
 using AntiSpam.Bot.Data;
+using AntiSpam.Bot.Features.Moderation;
 using AntiSpam.Bot.Features.SpamDetection;
 using AntiSpam.Bot.Services.Cache;
 using AntiSpam.Bot.Services.Discord;
@@ -10,13 +11,32 @@ using StackExchange.Redis;
 
 var builder = Host.CreateApplicationBuilder(args);
 
+// Build PostgreSQL connection string
+var pgConnectionString = builder.Configuration.GetConnectionString("Database");
+if (string.IsNullOrEmpty(pgConnectionString))
+{
+    // Build from individual components (K8s environment)
+    var pgHost = builder.Configuration["Postgres:Host"] ?? "localhost";
+    var pgDatabase = builder.Configuration["Postgres:Database"] ?? "antispam";
+    var pgUsername = builder.Configuration["Postgres:Username"] ?? "antispam";
+    var pgPassword = builder.Configuration["Postgres:Password"] ?? "";
+    pgConnectionString = $"Host={pgHost};Database={pgDatabase};Username={pgUsername};Password={pgPassword}";
+}
+
+// Build Redis connection string
+var redisConnectionString = builder.Configuration.GetConnectionString("Redis");
+if (string.IsNullOrEmpty(redisConnectionString))
+{
+    redisConnectionString = builder.Configuration["Redis:ConnectionString"] ?? "localhost:6379";
+}
+
 // PostgreSQL + EF Core (factory for singleton services)
 builder.Services.AddDbContextFactory<BotDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("Database")));
+    options.UseNpgsql(pgConnectionString));
 
 // Redis
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
-    ConnectionMultiplexer.Connect(builder.Configuration.GetConnectionString("Redis")!));
+    ConnectionMultiplexer.Connect(redisConnectionString));
 
 // Discord REST client
 builder.Services.AddSingleton<DiscordRestClient>(sp =>
@@ -27,7 +47,7 @@ builder.Services.AddSingleton<DiscordRestClient>(sp =>
     return client;
 });
 
-// Kafka consumer
+// Kafka consumer for messages
 builder.Services.AddSingleton<IConsumer<string, string>>(_ =>
 {
     var config = new ConsumerConfig
@@ -50,15 +70,16 @@ builder.Services.AddSingleton<SpamDetector>();
 builder.Services.AddSingleton<DiscordService>();
 builder.Services.AddSingleton<SpamActionService>();
 
-// Worker
+// Workers
 builder.Services.AddHostedService<MessageConsumerWorker>();
+builder.Services.AddHostedService<InteractionConsumerWorker>();
 
-var host = builder.Build();
+var app = builder.Build();
 
 // Ensure DB is created
-await using (var db = await host.Services.GetRequiredService<IDbContextFactory<BotDbContext>>().CreateDbContextAsync())
+await using (var db = await app.Services.GetRequiredService<IDbContextFactory<BotDbContext>>().CreateDbContextAsync())
 {
     await db.Database.EnsureCreatedAsync();
 }
 
-host.Run();
+app.Run();

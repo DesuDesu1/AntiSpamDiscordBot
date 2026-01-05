@@ -9,28 +9,38 @@ public class SpamIncident
     public string Username { get; set; } = string.Empty;
     
     /// <summary>
-    /// Контент спам-сообщения
+    /// Content of the spam message
     /// </summary>
     public string Content { get; set; } = string.Empty;
     
     /// <summary>
-    /// Каналы, в которые было отправлено сообщение
+    /// Channels where the spam was posted
     /// </summary>
     public List<ulong> ChannelIds { get; set; } = new();
     
     /// <summary>
-    /// Статус: Pending, Banned, Released
+    /// Status: Pending, Banned, Released
     /// </summary>
     public IncidentStatus Status { get; set; } = IncidentStatus.Pending;
     
     /// <summary>
-    /// Кто обработал (модератор)
+    /// Alert message ID in the mod channel (for reaction handling)
+    /// </summary>
+    public ulong? AlertMessageId { get; set; }
+    
+    /// <summary>
+    /// Alert channel ID
+    /// </summary>
+    public ulong? AlertChannelId { get; set; }
+    
+    /// <summary>
+    /// Who handled (moderator)
     /// </summary>
     public ulong? HandledByUserId { get; set; }
     public string? HandledByUsername { get; set; }
     
     /// <summary>
-    /// Комментарий модератора
+    /// Moderator note
     /// </summary>
     public string? ModeratorNote { get; set; }
     

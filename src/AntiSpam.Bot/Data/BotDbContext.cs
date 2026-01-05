@@ -1,5 +1,6 @@
 using AntiSpam.Bot.Data.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 
 namespace AntiSpam.Bot.Data;
 
@@ -16,7 +17,7 @@ public class BotDbContext : DbContext
         {
             entity.HasKey(e => e.GuildId);
             
-            // ulong хранится как decimal в PostgreSQL
+            // ulong stored as decimal in PostgreSQL
             entity.Property(e => e.GuildId)
                 .HasConversion<decimal>();
             
@@ -37,17 +38,30 @@ public class BotDbContext : DbContext
             entity.Property(e => e.HandledByUserId)
                 .HasConversion<decimal?>();
             
-            // Список каналов как JSON
+            entity.Property(e => e.AlertMessageId)
+                .HasConversion<decimal?>();
+            
+            entity.Property(e => e.AlertChannelId)
+                .HasConversion<decimal?>();
+            
+            // Channel IDs as comma-separated string with ValueComparer
+            var channelIdsComparer = new ValueComparer<List<ulong>>(
+                (c1, c2) => c1!.SequenceEqual(c2!),
+                c => c.Aggregate(0, (a, v) => HashCode.Combine(a, v.GetHashCode())),
+                c => c.ToList());
+            
             entity.Property(e => e.ChannelIds)
                 .HasConversion(
                     v => string.Join(',', v.Select(id => id.ToString())),
                     v => v.Split(',', StringSplitOptions.RemoveEmptyEntries)
                           .Select(s => ulong.Parse(s))
-                          .ToList());
+                          .ToList())
+                .Metadata.SetValueComparer(channelIdsComparer);
             
             entity.HasIndex(e => e.GuildId);
             entity.HasIndex(e => e.Status);
             entity.HasIndex(e => new { e.GuildId, e.Status });
+            entity.HasIndex(e => e.AlertMessageId);
         });
     }
 }
