@@ -148,7 +148,7 @@ public partial class InteractionConsumerWorker : BackgroundService
         
         // Update alert message
         var action = ban ? "Banned" : "Released";
-        await _discord.UpdateAlertMessageAsync(incident, action, moderatorName);
+        await _discord.UpdateAlertMessageAsync(incident.GuildId, incident, action, moderatorName);
         
         _logger.LogInformation("Incident #{Id} {Action} by {Moderator}", 
             incidentId, action, moderatorName);

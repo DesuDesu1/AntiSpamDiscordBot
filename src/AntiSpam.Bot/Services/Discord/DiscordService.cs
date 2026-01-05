@@ -40,35 +40,6 @@ public class DiscordService
                 return;
             }
 
-            // Get bot's user to check permissions
-            var botUser = await guild.GetCurrentUserAsync();
-            _logger.LogInformation(
-                "Bot permissions in guild {GuildId}: Admin={Admin}, ModerateMembers={Moderate}, ManageRoles={ManageRoles}",
-                guildId,
-                botUser.GuildPermissions.Administrator,
-                botUser.GuildPermissions.ModerateMembers,
-                botUser.GuildPermissions.ManageRoles);
-            
-            // Check role hierarchy
-            var botHighestRole = botUser.RoleIds.Count > 0 
-                ? guild.Roles.Where(r => botUser.RoleIds.Contains(r.Id)).Max(r => r.Position) 
-                : 0;
-            var userHighestRole = user.RoleIds.Count > 0 
-                ? guild.Roles.Where(r => user.RoleIds.Contains(r.Id)).Max(r => r.Position) 
-                : 0;
-            
-            _logger.LogInformation(
-                "Role hierarchy - Bot highest: {BotRole}, User highest: {UserRole}",
-                botHighestRole, userHighestRole);
-            
-            if (userHighestRole >= botHighestRole)
-            {
-                _logger.LogWarning(
-                    "Cannot mute user {UserId} - their role ({UserRole}) is >= bot's role ({BotRole})",
-                    userId, userHighestRole, botHighestRole);
-                return;
-            }
-
             await user.ModifyAsync(x => x.TimedOutUntil = DateTimeOffset.UtcNow.Add(duration));
             
             _logger.LogInformation("Muted user {UserId} in guild {GuildId} for {Duration}", 
@@ -150,14 +121,21 @@ public class DiscordService
         _logger.LogInformation("Bulk deleted {Count} messages in guild {GuildId}", deletedCount, guildId);
     }
 
-    public async Task SendAlertAsync(ulong channelId, SpamIncident incident, GuildConfig config)
+    public async Task SendAlertAsync(ulong guildId, ulong channelId, SpamIncident incident, GuildConfig config)
     {
         try
         {
-            var channel = await _client.GetChannelAsync(channelId) as ITextChannel;
+            var guild = await _client.GetGuildAsync(guildId);
+            if (guild == null)
+            {
+                _logger.LogWarning("Guild {GuildId} not found for alert", guildId);
+                return;
+            }
+            
+            var channel = await guild.GetTextChannelAsync(channelId);
             if (channel == null)
             {
-                _logger.LogWarning("Alert channel {ChannelId} not found", channelId);
+                _logger.LogWarning("Alert channel {ChannelId} not found in guild {GuildId}", channelId, guildId);
                 return;
             }
 
@@ -171,7 +149,7 @@ public class DiscordService
                     ? incident.Content[..200] + "..." 
                     : incident.Content)
                 .AddField("Channels", string.Join(", ", incident.ChannelIds.Select(id => $"<#{id}>")))
-                .AddField("Actions", "🔨 Ban • ✅ Release (buttons or reactions)")
+                .AddField("Actions", "🔨 Ban • ✅ Release")
                 .WithFooter($"Incident #{incident.Id}")
                 .WithTimestamp(DateTimeOffset.UtcNow)
                 .Build();
@@ -183,11 +161,6 @@ public class DiscordService
 
             var alertMessage = await channel.SendMessageAsync(embed: embed, components: components);
             
-            // Add reactions for alternative interaction
-            await alertMessage.AddReactionAsync(new Emoji("🔨"));
-            await alertMessage.AddReactionAsync(new Emoji("✅"));
-            
-            // Save alert message ID to incident
             await using var db = await _dbFactory.CreateDbContextAsync();
             var dbIncident = await db.SpamIncidents.FindAsync(incident.Id);
             if (dbIncident != null)
@@ -197,8 +170,7 @@ public class DiscordService
                 await db.SaveChangesAsync();
             }
             
-            _logger.LogInformation("Sent alert for incident #{Id} to channel {ChannelId}, message {MessageId}", 
-                incident.Id, channelId, alertMessage.Id);
+            _logger.LogInformation("Sent alert for incident #{Id} to channel {ChannelId}", incident.Id, channelId);
         }
         catch (Exception ex)
         {
@@ -206,14 +178,17 @@ public class DiscordService
         }
     }
 
-    public async Task UpdateAlertMessageAsync(SpamIncident incident, string action, string moderator)
+    public async Task UpdateAlertMessageAsync(ulong guildId, SpamIncident incident, string action, string moderator)
     {
         if (incident.AlertMessageId == null || incident.AlertChannelId == null)
             return;
 
         try
         {
-            var channel = await _client.GetChannelAsync(incident.AlertChannelId.Value) as ITextChannel;
+            var guild = await _client.GetGuildAsync(guildId);
+            if (guild == null) return;
+            
+            var channel = await guild.GetTextChannelAsync(incident.AlertChannelId.Value);
             if (channel == null) return;
 
             var message = await channel.GetMessageAsync(incident.AlertMessageId.Value) as IUserMessage;
@@ -234,11 +209,10 @@ public class DiscordService
                 .WithTimestamp(DateTimeOffset.UtcNow)
                 .Build();
 
-            // Remove buttons after action
             await message.ModifyAsync(m =>
             {
                 m.Embed = embed;
-                m.Components = new ComponentBuilder().Build(); // Empty components
+                m.Components = new ComponentBuilder().Build();
             });
         }
         catch (Exception ex)

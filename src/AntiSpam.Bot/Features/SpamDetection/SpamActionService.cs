@@ -76,7 +76,7 @@ public class SpamActionService
         // 4. Отправляем алерт модераторам
         if (config.AlertChannelId.HasValue)
         {
-            await _discord.SendAlertAsync(config.AlertChannelId.Value, incident, config);
+            await _discord.SendAlertAsync(guildId, config.AlertChannelId.Value, incident, config);
         }
     }
 
