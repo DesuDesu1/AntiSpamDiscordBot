@@ -140,15 +140,17 @@ public class DiscordService
                 return;
             }
 
+            var contentDisplay = string.IsNullOrWhiteSpace(incident.Content)
+                ? "*[No text - attachment spam]*"
+                : (incident.Content.Length > 200 ? incident.Content[..200] + "..." : incident.Content);
+
             var embed = new EmbedBuilder()
                 .WithTitle("🚨 Spam Detected")
                 .WithColor(Color.Red)
                 .WithDescription($"**User:** <@{incident.UserId}> ({incident.Username})\n" +
                                  $"**Channels:** {incident.ChannelIds.Count}\n" +
                                  $"**Status:** Muted for {config.MuteDurationMinutes} minutes")
-                .AddField("Content", incident.Content.Length > 200 
-                    ? incident.Content[..200] + "..." 
-                    : incident.Content)
+                .AddField("Content", contentDisplay)
                 .AddField("Channels", string.Join(", ", incident.ChannelIds.Select(id => $"<#{id}>")))
                 .AddField("Actions", "🔨 Ban • ✅ Release")
                 .WithFooter($"Incident #{incident.Id}")
@@ -199,14 +201,16 @@ public class DiscordService
             var color = action == "Banned" ? Color.DarkRed : Color.Green;
             var emoji = action == "Banned" ? "🔨" : "✅";
 
+            var contentDisplay = string.IsNullOrWhiteSpace(incident.Content)
+                ? "*[No text - attachment spam]*"
+                : (incident.Content.Length > 200 ? incident.Content[..200] + "..." : incident.Content);
+
             var embed = new EmbedBuilder()
                 .WithTitle($"{emoji} Spam Incident - {action}")
                 .WithColor(color)
                 .WithDescription($"**User:** <@{incident.UserId}> ({incident.Username})\n" +
                                  $"**Status:** {action} by {moderator}")
-                .AddField("Content", incident.Content.Length > 200 
-                    ? incident.Content[..200] + "..." 
-                    : incident.Content)
+                .AddField("Content", contentDisplay)
                 .WithFooter($"Incident #{incident.Id}")
                 .WithTimestamp(DateTimeOffset.UtcNow)
                 .Build();
