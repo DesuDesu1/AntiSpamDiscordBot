@@ -75,7 +75,6 @@ public class DiscordGatewayWorker : BackgroundService
     {
         _logger.LogInformation("Bot is ready! Registering slash commands...");
         
-        // Register global slash commands
         var antispamCommand = new SlashCommandBuilder()
             .WithName("antispam")
             .WithDescription("Anti-spam bot configuration")
@@ -123,7 +122,6 @@ public class DiscordGatewayWorker : BackgroundService
 
         try
         {
-            // For testing: register to specific guild (instant)
             var testGuildId = _config["Discord:TestGuildId"];
             if (!string.IsNullOrEmpty(testGuildId))
             {
@@ -136,7 +134,6 @@ public class DiscordGatewayWorker : BackgroundService
             }
             else
             {
-                // Register globally (can take up to 1 hour)
                 await _client.CreateGlobalApplicationCommandAsync(antispamCommand.Build());
                 _logger.LogInformation("Registered global slash commands");
             }
@@ -147,16 +144,41 @@ public class DiscordGatewayWorker : BackgroundService
         }
     }
 
+    /// <summary>
+    /// <summary>
+    /// Convert Discord option value to a JSON-serializable primitive.
+    /// ISnowflakeEntity is base for all Discord entities (channels, users, roles, etc.)
+    /// </summary>
+    private static object ConvertOptionValue(object? value)
+    {
+        if (value is null) return "";
+        if (value is ISnowflakeEntity entity) return entity.Id;
+        if (value is bool or string or int or long or double or ulong or float) return value;
+        return value.ToString() ?? "";
+    }
+
     private async Task OnSlashCommandExecutedAsync(SocketSlashCommand command)
     {
         if (command.CommandName != "antispam") return;
         if (command.GuildId == null) return;
 
+        // Defer first to acknowledge the interaction
+        await command.DeferAsync(ephemeral: true);
+
         // Forward to Kafka for processing by Bot
         var subCommand = command.Data.Options.First();
-        var options = subCommand.Options?.ToDictionary(
-            o => o.Name, 
-            o => o.Value) ?? new Dictionary<string, object>();
+        
+        // Convert ALL options to serializable primitives only
+        var options = new Dictionary<string, object>();
+        if (subCommand.Options != null)
+        {
+            foreach (var opt in subCommand.Options)
+            {
+                options[opt.Name] = ConvertOptionValue(opt.Value);
+                _logger.LogDebug("Option {Name}: {Type} -> {Value}", 
+                    opt.Name, opt.Value?.GetType().Name ?? "null", options[opt.Name]);
+            }
+        }
 
         var @event = new SlashCommandEvent
         {
@@ -174,9 +196,6 @@ public class DiscordGatewayWorker : BackgroundService
         };
 
         await PublishAsync(KafkaTopics.Commands, command.GuildId.Value.ToString(), @event);
-        
-        // Defer response - Bot will respond via webhook
-        await command.DeferAsync(ephemeral: true);
         
         _logger.LogInformation("Slash command /{Command} {SubCommand} from {User} in guild {Guild}", 
             command.CommandName, subCommand.Name, command.User.Username, command.GuildId);
@@ -241,7 +260,7 @@ public class DiscordGatewayWorker : BackgroundService
         if (channel.Value is not SocketGuildChannel guildChannel) return;
 
         var emote = reaction.Emote.Name;
-        if (emote != "��" && emote != "✅") return;
+        if (emote != "🔨" && emote != "✅") return;
 
         var @event = new InteractionEvent
         {
