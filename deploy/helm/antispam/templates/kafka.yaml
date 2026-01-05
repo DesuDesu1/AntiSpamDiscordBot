@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: kafka
-          image: docker.io/apache/kafka:3.7.0
+          image: confluentinc/cp-kafka:7.5.0
           ports:
             - containerPort: 9092
           env:
@@ -38,6 +38,8 @@ spec:
               value: "PLAINTEXT"
             - name: CLUSTER_ID
               value: "MkU3OEVBNTcwNTJENDM2Qk"
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "1"
           volumeMounts:
             - name: kafka-data
               mountPath: /bitnami/kafka
