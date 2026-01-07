@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AntiSpam.Bot.Features.GuildManagement;
 using AntiSpam.Bot.Services.Cache;
 using AntiSpam.Bot.Services.Discord;
 using AntiSpam.Contracts;
@@ -13,6 +14,7 @@ public partial class MessageConsumerWorker : BackgroundService
     private readonly IConsumer<string, string> _consumer;
     private readonly SpamDetector _spamDetector;
     private readonly SpamActionService _spamAction;
+    private readonly GuildConfigService _configService;
     private readonly DiscordService _discord;
     private readonly ILogger<MessageConsumerWorker> _logger;
 
@@ -20,12 +22,14 @@ public partial class MessageConsumerWorker : BackgroundService
         IConsumer<string, string> consumer,
         SpamDetector spamDetector,
         SpamActionService spamAction,
+        GuildConfigService configService,
         DiscordService discord,
         ILogger<MessageConsumerWorker> logger)
     {
         _consumer = consumer;
         _spamDetector = spamDetector;
         _spamAction = spamAction;
+        _configService = configService;
         _discord = discord;
         _logger = logger;
     }
@@ -73,7 +77,7 @@ public partial class MessageConsumerWorker : BackgroundService
 
     private async Task ProcessMessageAsync(MessageReceivedEvent message)
     {
-        var config = await _spamAction.GetOrCreateGuildConfigAsync(message.GuildId);
+        var config = await _configService.GetOrCreateAsync(message.GuildId);
         
         if (!config.IsEnabled)
             return;

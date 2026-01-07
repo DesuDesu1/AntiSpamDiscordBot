@@ -1,5 +1,6 @@
 using AntiSpam.Bot.Data;
 using AntiSpam.Bot.Data.Entities;
+using AntiSpam.Bot.Features.GuildManagement;
 using AntiSpam.Bot.Services.Discord;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,37 +10,19 @@ public class SpamActionService
 {
     private readonly DiscordService _discord;
     private readonly IDbContextFactory<BotDbContext> _dbFactory;
+    private readonly GuildConfigService _configService;
     private readonly ILogger<SpamActionService> _logger;
 
     public SpamActionService(
         DiscordService discord,
         IDbContextFactory<BotDbContext> dbFactory,
+        GuildConfigService configService,
         ILogger<SpamActionService> logger)
     {
         _discord = discord;
         _dbFactory = dbFactory;
+        _configService = configService;
         _logger = logger;
-    }
-
-    public async Task<GuildConfig?> GetGuildConfigAsync(ulong guildId)
-    {
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        return await db.GuildConfigs.FindAsync(guildId);
-    }
-
-    public async Task<GuildConfig> GetOrCreateGuildConfigAsync(ulong guildId)
-    {
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        
-        var config = await db.GuildConfigs.FindAsync(guildId);
-        if (config == null)
-        {
-            config = new GuildConfig { GuildId = guildId };
-            db.GuildConfigs.Add(config);
-            await db.SaveChangesAsync();
-        }
-        
-        return config;
     }
 
     public async Task HandleSpamDetectedAsync(
@@ -50,7 +33,7 @@ public class SpamActionService
         List<ulong> channelIds,
         List<(ulong ChannelId, ulong MessageId)> messagesToDelete)
     {
-        var config = await GetOrCreateGuildConfigAsync(guildId);
+        var config = await _configService.GetOrCreateAsync(guildId);
         
         if (!config.IsEnabled)
         {
@@ -92,7 +75,7 @@ public class SpamActionService
         ulong messageId,
         TimeSpan? memberFor)
     {
-        var config = await GetOrCreateGuildConfigAsync(guildId);
+        var config = await _configService.GetOrCreateAsync(guildId);
         
         if (!config.IsEnabled || !config.DetectNewUserLinks)
         {
