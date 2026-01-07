@@ -81,10 +81,10 @@ builder.Services.AddHostedService<CommandConsumerWorker>();
 
 var app = builder.Build();
 
-// Ensure DB is created
+// Apply pending migrations
 await using (var db = await app.Services.GetRequiredService<IDbContextFactory<BotDbContext>>().CreateDbContextAsync())
 {
-    await db.Database.EnsureCreatedAsync();
+    await db.Database.MigrateAsync();
 }
 
 app.Run();

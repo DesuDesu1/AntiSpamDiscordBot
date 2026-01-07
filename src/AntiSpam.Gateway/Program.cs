@@ -209,6 +209,8 @@ public class DiscordGatewayWorker : BackgroundService
         if (message.Channel is not SocketGuildChannel guildChannel)
             return;
 
+        var guildUser = message.Author as Discord.WebSocket.SocketGuildUser;
+        
         var @event = new MessageReceivedEvent
         {
             EventId = Guid.NewGuid(),
@@ -220,7 +222,8 @@ public class DiscordGatewayWorker : BackgroundService
             AuthorUsername = message.Author.Username,
             Content = message.Content,
             IsBot = message.Author.IsBot,
-            AttachmentCount = message.Attachments.Count
+            AttachmentCount = message.Attachments.Count,
+            AuthorJoinedAt = guildUser?.JoinedAt
         };
 
         await PublishAsync(KafkaTopics.Messages, message.Author.Id.ToString(), @event);

@@ -13,6 +13,7 @@ public class CommandConsumerWorker : BackgroundService
     private readonly DiscordRestClient _discord;
     private readonly HttpClient _http;
     private readonly ILogger<CommandConsumerWorker> _logger;
+    private static readonly string[] value = ["users", "roles", "everyone"];
 
     public CommandConsumerWorker(
         IServiceProvider services,
@@ -124,7 +125,7 @@ public class CommandConsumerWorker : BackgroundService
         { 
             content = message, 
             flags = 64, // ephemeral
-            allowed_mentions = new { parse = new[] { "users", "roles", "everyone" } }
+            allowed_mentions = new { parse = value }
         });
         var content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
         

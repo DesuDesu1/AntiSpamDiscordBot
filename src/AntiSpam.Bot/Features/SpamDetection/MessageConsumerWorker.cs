@@ -1,27 +1,32 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using AntiSpam.Bot.Services.Cache;
+using AntiSpam.Bot.Services.Discord;
 using AntiSpam.Contracts;
 using AntiSpam.Contracts.Events;
 using Confluent.Kafka;
 
 namespace AntiSpam.Bot.Features.SpamDetection;
 
-public class MessageConsumerWorker : BackgroundService
+public partial class MessageConsumerWorker : BackgroundService
 {
     private readonly IConsumer<string, string> _consumer;
     private readonly SpamDetector _spamDetector;
     private readonly SpamActionService _spamAction;
+    private readonly DiscordService _discord;
     private readonly ILogger<MessageConsumerWorker> _logger;
 
     public MessageConsumerWorker(
         IConsumer<string, string> consumer,
         SpamDetector spamDetector,
         SpamActionService spamAction,
+        DiscordService discord,
         ILogger<MessageConsumerWorker> logger)
     {
         _consumer = consumer;
         _spamDetector = spamDetector;
         _spamAction = spamAction;
+        _discord = discord;
         _logger = logger;
     }
 
@@ -73,16 +78,45 @@ public class MessageConsumerWorker : BackgroundService
         if (!config.IsEnabled)
             return;
 
-        // Пропускаем если нет ни текста ни вложений
+        // Check for suspicious new user posting links
+        if (config.DetectNewUserLinks && ContainsLink(message.Content))
+        {
+            var threshold = TimeSpan.FromHours(config.NewUserHoursThreshold);
+            
+            // Try from message first (Gateway cache), fallback to API if missing
+            var joinedAt = message.AuthorJoinedAt 
+                ?? await _discord.GetUserJoinedAtAsync(message.GuildId, message.AuthorId);
+            
+            var (isNew, memberFor) = IsNewUser(joinedAt, threshold);
+            
+            if (isNew)
+            {
+                _logger.LogWarning(
+                    "SUSPICIOUS: New user {User} ({Id}) posted link, member for {MemberFor} (threshold: {Threshold}h) in guild {Guild}",
+                    message.AuthorUsername, message.AuthorId, memberFor, config.NewUserHoursThreshold, message.GuildId);
+
+                await _spamAction.HandleSuspiciousNewUserAsync(
+                    message.GuildId,
+                    message.AuthorId,
+                    message.AuthorUsername,
+                    message.Content,
+                    message.ChannelId,
+                    message.MessageId,
+                    memberFor);
+                return;
+            }
+        }
+
+        // Skip if no text and no attachments
         if (string.IsNullOrWhiteSpace(message.Content) && message.AttachmentCount == 0)
             return;
 
         var cachedMsg = new CachedMessage(
-            message.Content, 
+            message.Content,
             message.ChannelId, 
             message.MessageId, 
             DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            message.AttachmentCount);  // Передаём количество, а не bool
+            message.AttachmentCount);
 
         var options = new SpamDetectionOptions
         {
@@ -116,6 +150,26 @@ public class MessageConsumerWorker : BackgroundService
                 messagesToDelete);
         }
     }
+
+    private static (bool IsNew, TimeSpan? MemberFor) IsNewUser(DateTimeOffset? joinedAt, TimeSpan threshold)
+    {
+        if (joinedAt == null)
+            return (false, null); // Can't determine, assume not new
+            
+        var memberFor = DateTimeOffset.UtcNow - joinedAt.Value;
+        return (memberFor < threshold, memberFor);
+    }
+
+    private static bool ContainsLink(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+            return false;
+            
+        return LinkRegex().IsMatch(content);
+    }
+
+    [GeneratedRegex(@"https?://|discord\.gg/|t\.me/|bit\.ly/|tinyurl\.com/", RegexOptions.IgnoreCase)]
+    private static partial Regex LinkRegex();
 
     public override void Dispose()
     {

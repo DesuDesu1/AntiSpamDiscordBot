@@ -20,14 +20,6 @@ public static class TextSimilarity
     }
 
     /// <summary>
-    /// Проверяет, похожи ли тексты с заданным порогом
-    /// </summary>
-    public static bool IsSimilar(string text1, string text2, double threshold, int shingleSize = DefaultShingleSize)
-    {
-        return Calculate(text1, text2, shingleSize) >= threshold;
-    }
-
-    /// <summary>
     /// Jaccard index = |A ∩ B| / |A ∪ B|
     /// </summary>
     private static double JaccardIndex(HashSet<string> set1, HashSet<string> set2)

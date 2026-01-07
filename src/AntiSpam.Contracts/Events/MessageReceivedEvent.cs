@@ -18,4 +18,9 @@ public sealed record MessageReceivedEvent
     /// Количество вложений (картинки, файлы)
     /// </summary>
     public int AttachmentCount { get; init; }
+    
+    /// <summary>
+    /// When the user joined the guild (from Discord.NET cache, no API call)
+    /// </summary>
+    public DateTimeOffset? AuthorJoinedAt { get; init; }
 }

@@ -44,6 +44,17 @@ public class GuildConfig
     /// </summary>
     public int MuteDurationMinutes { get; set; } = 60;
     
+    /// <summary>
+    /// Detect links from new users (users with low message count)
+    /// </summary>
+    public bool DetectNewUserLinks { get; set; } = true;
+    
+    /// <summary>
+    /// How long a user is considered "new" (in hours, default 24).
+    /// Users who joined within this time are flagged if posting links.
+    /// </summary>
+    public int NewUserHoursThreshold { get; set; } = 24;
+    
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 }

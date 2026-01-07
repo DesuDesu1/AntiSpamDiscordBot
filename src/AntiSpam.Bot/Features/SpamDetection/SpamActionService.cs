@@ -80,6 +80,65 @@ public class SpamActionService
         }
     }
 
+    /// <summary>
+    /// Handles suspicious new user posting links (recently joined + link)
+    /// </summary>
+    public async Task HandleSuspiciousNewUserAsync(
+        ulong guildId,
+        ulong userId,
+        string username,
+        string content,
+        ulong channelId,
+        ulong messageId,
+        TimeSpan? memberFor)
+    {
+        var config = await GetOrCreateGuildConfigAsync(guildId);
+        
+        if (!config.IsEnabled || !config.DetectNewUserLinks)
+        {
+            return;
+        }
+
+        var memberForDisplay = memberFor.HasValue 
+            ? FormatDuration(memberFor.Value) 
+            : "unknown";
+
+        // Create incident with special reason
+        var incident = await CreateIncidentAsync(
+            guildId, 
+            userId, 
+            username, 
+            $"[NEW USER - joined {memberForDisplay} ago] {content}", 
+            new List<ulong> { channelId });
+
+        // Delete the message
+        if (config.DeleteMessages)
+        {
+            await _discord.BulkDeleteMessagesAsync(guildId, new List<(ulong, ulong)> { (channelId, messageId) });
+        }
+
+        // Mute the user
+        if (config.MuteOnSpam)
+        {
+            await _discord.MuteUserAsync(guildId, userId, TimeSpan.FromMinutes(config.MuteDurationMinutes));
+        }
+
+        // Send alert to moderators
+        if (config.AlertChannelId.HasValue)
+        {
+            await _discord.SendNewUserLinkAlertAsync(guildId, config.AlertChannelId.Value, incident, memberFor, config);
+        }
+    }
+
+    private static string FormatDuration(TimeSpan duration)
+    {
+        if (duration.TotalMinutes < 60)
+            return $"{(int)duration.TotalMinutes}m";
+        if (duration.TotalHours < 24)
+            return $"{(int)duration.TotalHours}h {duration.Minutes}m";
+        return $"{(int)duration.TotalDays}d {duration.Hours}h";
+    }
+
     private async Task<SpamIncident> CreateIncidentAsync(
         ulong guildId,
         ulong userId,
