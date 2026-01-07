@@ -79,9 +79,14 @@ public partial class MessageConsumerWorker : BackgroundService
             return;
 
         // Check for suspicious new user posting links
-        if (config.DetectNewUserLinks && ContainsSuspiciousLink(message.Content, message.GuildId, config.AllowedLinks, out var hasExternalLink))
+        if (config.DetectNewUserLinks)
         {
-            if (hasExternalLink)
+            var hasSuspiciousLink = ContainsSuspiciousLink(message.Content, message.GuildId, config.AllowedLinks, out var hasExternalLink);
+            
+            _logger.LogInformation("Link check for {User}: hasSuspicious={HasSuspicious}, hasExternal={HasExternal}, allowedLinks={AllowedLinks}", 
+                message.AuthorUsername, hasSuspiciousLink, hasExternalLink, string.Join(",", config.AllowedLinks));
+            
+            if (hasSuspiciousLink && hasExternalLink)
             {
                 var threshold = TimeSpan.FromHours(config.NewUserHoursThreshold);
             
@@ -90,6 +95,9 @@ public partial class MessageConsumerWorker : BackgroundService
                     ?? await _discord.GetUserJoinedAtAsync(message.GuildId, message.AuthorId);
             
                 var (isNew, memberFor) = IsNewUser(joinedAt, threshold);
+                
+                _logger.LogInformation("New user check for {User}: joinedAt={JoinedAt}, isNew={IsNew}, memberFor={MemberFor}, threshold={Threshold}h",
+                    message.AuthorUsername, joinedAt, isNew, memberFor, config.NewUserHoursThreshold);
             
                 if (isNew)
                 {
