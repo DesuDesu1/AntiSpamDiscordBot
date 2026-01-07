@@ -79,7 +79,7 @@ public partial class MessageConsumerWorker : BackgroundService
             return;
 
         // Check for suspicious new user posting links
-        if (config.DetectNewUserLinks && ContainsSuspiciousLink(message.Content, message.GuildId, out var hasExternalLink))
+        if (config.DetectNewUserLinks && ContainsSuspiciousLink(message.Content, message.GuildId, config.AllowedLinks, out var hasExternalLink))
         {
             if (hasExternalLink)
             {
@@ -117,7 +117,6 @@ public partial class MessageConsumerWorker : BackgroundService
                 }
             }
         }
-
         // Skip if no text and no attachments
         if (string.IsNullOrWhiteSpace(message.Content) && message.AttachmentCount == 0)
             return;
@@ -175,43 +174,85 @@ public partial class MessageConsumerWorker : BackgroundService
     /// Checks if content contains links that could be suspicious.
     /// Returns false if all links point to the same server (discord.com/channels/GUILD_ID/...)
     /// </summary>
-    private static bool ContainsSuspiciousLink(string? content, ulong currentGuildId, out bool hasExternalLink)
+    private static bool ContainsSuspiciousLink(string? content, ulong currentGuildId, List<string> allowedLinks, out bool hasExternalLink)
     {
         hasExternalLink = false;
         
         if (string.IsNullOrWhiteSpace(content))
             return false;
 
-        // Check for non-Discord links (always suspicious for new users)
-        if (ExternalLinkRegex().IsMatch(content))
+        // Extract all URLs from content
+        var urlMatches = UrlRegex().Matches(content);
+        
+        foreach (Match match in urlMatches)
         {
-            hasExternalLink = true;
-            return true;
-        }
-
-        // Check for discord.gg invites (need API to verify, mark as potentially suspicious)
-        if (DiscordInviteRegex().IsMatch(content))
-        {
-            hasExternalLink = true; // Will be verified via API later
-            return true;
-        }
-
-        // Check for discord.com/channels links - can verify guild ID directly
-        var channelMatches = DiscordChannelLinkRegex().Matches(content);
-        foreach (Match match in channelMatches)
-        {
-            if (ulong.TryParse(match.Groups[1].Value, out var guildId) && guildId != currentGuildId)
+            var url = match.Value.ToLowerInvariant();
+            var domain = ExtractDomain(url);
+            
+            // Skip allowed links (can be domain or full path like youtube.com/channel/xyz)
+            var urlPath = ExtractUrlPath(url);
+            if (allowedLinks.Any(allowed => 
+                urlPath.StartsWith(allowed, StringComparison.OrdinalIgnoreCase) ||
+                domain.Equals(allowed, StringComparison.OrdinalIgnoreCase) ||
+                domain.EndsWith("." + allowed, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+            
+            // Check discord.com/channels links - verify guild ID
+            var channelMatch = DiscordChannelLinkRegex().Match(url);
+            if (channelMatch.Success)
+            {
+                if (ulong.TryParse(channelMatch.Groups[1].Value, out var guildId) && guildId == currentGuildId)
+                    continue; // Same server, skip
+                
+                hasExternalLink = true;
+                return true;
+            }
+            
+            // Check discord.gg invites - will be verified via API
+            if (DiscordInviteRegex().IsMatch(url))
+            {
+                hasExternalLink = true; // Will be verified via API later
+                return true;
+            }
+            
+            // Any other URL is suspicious
+            if (!domain.Contains("discord.com") && !domain.Contains("discordapp.com"))
             {
                 hasExternalLink = true;
                 return true;
             }
         }
 
-        // Has discord channel links but all are same-server
-        if (channelMatches.Count > 0)
-            return true; // Has links, but hasExternalLink is false
-
         return false;
+    }
+
+    private static string ExtractDomain(string url)
+    {
+        // Remove protocol
+        if (url.StartsWith("https://"))
+            url = url[8..];
+        else if (url.StartsWith("http://"))
+            url = url[7..];
+        
+        // Get domain part
+        var slashIndex = url.IndexOf('/');
+        if (slashIndex > 0)
+            url = url[..slashIndex];
+        
+        return url;
+    }
+
+    private static string ExtractUrlPath(string url)
+    {
+        // Remove protocol and return domain + path
+        if (url.StartsWith("https://"))
+            url = url[8..];
+        else if (url.StartsWith("http://"))
+            url = url[7..];
+        
+        return url.TrimEnd('/');
     }
 
     /// <summary>
@@ -235,8 +276,8 @@ public partial class MessageConsumerWorker : BackgroundService
         return true; // All invites are for this server
     }
 
-    [GeneratedRegex(@"https?://(?!discord\.com|discord\.gg|discordapp\.com)|t\.me/|bit\.ly/|tinyurl\.com/", RegexOptions.IgnoreCase)]
-    private static partial Regex ExternalLinkRegex();
+    [GeneratedRegex(@"https?://[^\s<>""]+", RegexOptions.IgnoreCase)]
+    private static partial Regex UrlRegex();
 
     [GeneratedRegex(@"(?:discord\.gg|discord\.com/invite)/([a-zA-Z0-9-]+)", RegexOptions.IgnoreCase)]
     private static partial Regex DiscordInviteRegex();

@@ -55,6 +55,12 @@ public class GuildConfig
     /// </summary>
     public int NewUserHoursThreshold { get; set; } = 24;
     
+    /// <summary>
+    /// Allowed link patterns for new user link detection.
+    /// Can be full URLs, domains, or partial matches (e.g., "youtube.com", "twitch.tv/mychannel", "github.com/myorg")
+    /// </summary>
+    public List<string> AllowedLinks { get; set; } = new();
+    
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 }

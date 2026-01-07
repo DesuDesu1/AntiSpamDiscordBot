@@ -36,6 +36,10 @@ public class GuildCommandHandler
             "mute" => await HandleMuteAsync(guildId, GetBool(options, "enabled"), 
                 options.ContainsKey("duration") ? GetInt(options, "duration") : 60),
             "delete" => await HandleDeleteAsync(guildId, GetBool(options, "enabled")),
+            "allow-link" => await HandleAllowLinkAsync(guildId, GetString(options, "link")),
+            "remove-link" => await HandleRemoveLinkAsync(guildId, GetString(options, "link")),
+            "list-links" => await HandleListLinksAsync(guildId),
+            "new-user-threshold" => await HandleNewUserThresholdAsync(guildId, GetInt(options, "hours")),
             _ => "❌ Unknown command"
         };
     }
@@ -87,6 +91,18 @@ public class GuildCommandHandler
         };
     }
 
+    private static string GetString(Dictionary<string, object> options, string key)
+    {
+        if (!options.TryGetValue(key, out var value)) return "";
+        
+        return value switch
+        {
+            JsonElement je when je.ValueKind == JsonValueKind.String => je.GetString() ?? "",
+            string s => s,
+            _ => value.ToString() ?? ""
+        };
+    }
+
     private async Task<string> HandleStatusAsync(ulong guildId)
     {
         var config = await _configService.GetOrCreateAsync(guildId);
@@ -106,6 +122,10 @@ public class GuildCommandHandler
                 alertChannelDisplay = $"ID: {config.AlertChannelId.Value}";
             }
         }
+
+        var allowedLinksDisplay = config.AllowedLinks.Count > 0 
+            ? $"{config.AllowedLinks.Count} links" 
+            : "None";
         
         return $"""
             📊 **Anti-Spam Settings**
@@ -121,6 +141,7 @@ public class GuildCommandHandler
             **New User Links:**
             • Detection: {(config.DetectNewUserLinks ? "✅ Enabled" : "❌ Disabled")}
             • New user threshold: {config.NewUserHoursThreshold}h
+            • Allowed links: {allowedLinksDisplay}
             
             **Actions:**
             • Mute: {(config.MuteOnSpam ? $"✅ {config.MuteDurationMinutes} min" : "❌")}
@@ -190,5 +211,36 @@ public class GuildCommandHandler
         return enabled 
             ? "✅ Auto-delete spam enabled" 
             : "❌ Auto-delete spam disabled";
+    }
+
+    private async Task<string> HandleAllowLinkAsync(ulong guildId, string link)
+    {
+        var (success, message) = await _configService.AddAllowedLinkAsync(guildId, link);
+        return success ? $"✅ {message}" : $"❌ {message}";
+    }
+
+    private async Task<string> HandleRemoveLinkAsync(ulong guildId, string link)
+    {
+        var (success, message) = await _configService.RemoveAllowedLinkAsync(guildId, link);
+        return success ? $"✅ {message}" : $"❌ {message}";
+    }
+
+    private async Task<string> HandleListLinksAsync(ulong guildId)
+    {
+        var links = await _configService.GetAllowedLinksAsync(guildId);
+        
+        if (links.Count == 0)
+            return "📋 **Allowed Links**\n\nNo links allowed yet.\nUse `/antispam allow-link` to add one.";
+        
+        var list = string.Join("\n", links.Select(l => $"• `{l}`"));
+        return $"📋 **Allowed Links** ({links.Count}/100)\n\n{list}";
+    }
+
+    private async Task<string> HandleNewUserThresholdAsync(ulong guildId, int hours)
+    {
+        var success = await _configService.SetNewUserThresholdAsync(guildId, hours);
+        return success 
+            ? $"✅ New user threshold set to {hours}h" 
+            : "❌ Hours must be 1-168 (1h to 7 days)";
     }
 }

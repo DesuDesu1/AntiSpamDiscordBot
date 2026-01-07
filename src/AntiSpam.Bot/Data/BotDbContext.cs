@@ -23,6 +23,20 @@ public class BotDbContext : DbContext
             
             entity.Property(e => e.AlertChannelId)
                 .HasConversion<decimal?>();
+            
+            // Allowed links as comma-separated string
+            var linksComparer = new ValueComparer<List<string>>(
+                (c1, c2) => c1!.SequenceEqual(c2!),
+                c => c.Aggregate(0, (a, v) => HashCode.Combine(a, v.GetHashCode())),
+                c => c.ToList());
+            
+            entity.Property(e => e.AllowedLinks)
+                .HasConversion(
+                    v => string.Join(',', v),
+                    v => string.IsNullOrEmpty(v) 
+                        ? new List<string>() 
+                        : v.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList())
+                .Metadata.SetValueComparer(linksComparer);
         });
         
         modelBuilder.Entity<SpamIncident>(entity =>
