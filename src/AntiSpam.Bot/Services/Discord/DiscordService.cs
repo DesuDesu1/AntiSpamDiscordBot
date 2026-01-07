@@ -328,4 +328,25 @@ public class DiscordService
             return $"{(int)duration.TotalHours}h {duration.Minutes}m";
         return $"{(int)duration.TotalDays}d {duration.Hours}h";
     }
+
+    /// <summary>
+    /// Resolves a discord.gg invite code to get the guild ID it points to.
+    /// Returns null if invite is invalid or couldn't be resolved.
+    /// </summary>
+    public async Task<ulong?> ResolveInviteGuildIdAsync(string inviteCode)
+    {
+        try
+        {
+            var invite = await _client.GetInviteAsync(inviteCode);
+            var guildId = invite?.GuildId;
+            
+            _logger.LogDebug("Resolved invite {Code} to guild {GuildId}", inviteCode, guildId);
+            return guildId;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to resolve invite {Code}", inviteCode);
+            return null;
+        }
+    }
 }

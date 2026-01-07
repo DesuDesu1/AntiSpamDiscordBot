@@ -79,31 +79,42 @@ public partial class MessageConsumerWorker : BackgroundService
             return;
 
         // Check for suspicious new user posting links
-        if (config.DetectNewUserLinks && ContainsLink(message.Content))
+        if (config.DetectNewUserLinks && ContainsSuspiciousLink(message.Content, message.GuildId, out var hasExternalLink))
         {
-            var threshold = TimeSpan.FromHours(config.NewUserHoursThreshold);
-            
-            // Try from message first (Gateway cache), fallback to API if missing
-            var joinedAt = message.AuthorJoinedAt 
-                ?? await _discord.GetUserJoinedAtAsync(message.GuildId, message.AuthorId);
-            
-            var (isNew, memberFor) = IsNewUser(joinedAt, threshold);
-            
-            if (isNew)
+            if (hasExternalLink)
             {
-                _logger.LogWarning(
-                    "SUSPICIOUS: New user {User} ({Id}) posted link, member for {MemberFor} (threshold: {Threshold}h) in guild {Guild}",
-                    message.AuthorUsername, message.AuthorId, memberFor, config.NewUserHoursThreshold, message.GuildId);
+                var threshold = TimeSpan.FromHours(config.NewUserHoursThreshold);
+            
+                // Try from message first (Gateway cache), fallback to API if missing
+                var joinedAt = message.AuthorJoinedAt 
+                    ?? await _discord.GetUserJoinedAtAsync(message.GuildId, message.AuthorId);
+            
+                var (isNew, memberFor) = IsNewUser(joinedAt, threshold);
+            
+                if (isNew)
+                {
+                    // Double-check discord.gg invites via API (they might be same-server)
+                    if (await ContainsOnlyOwnServerInvitesAsync(message.Content, message.GuildId))
+                    {
+                        _logger.LogDebug("New user {User} posted invite to own server, allowing", message.AuthorUsername);
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "SUSPICIOUS: New user {User} ({Id}) posted link, member for {MemberFor} (threshold: {Threshold}h) in guild {Guild}",
+                            message.AuthorUsername, message.AuthorId, memberFor, config.NewUserHoursThreshold, message.GuildId);
 
-                await _spamAction.HandleSuspiciousNewUserAsync(
-                    message.GuildId,
-                    message.AuthorId,
-                    message.AuthorUsername,
-                    message.Content,
-                    message.ChannelId,
-                    message.MessageId,
-                    memberFor);
-                return;
+                        await _spamAction.HandleSuspiciousNewUserAsync(
+                            message.GuildId,
+                            message.AuthorId,
+                            message.AuthorUsername,
+                            message.Content,
+                            message.ChannelId,
+                            message.MessageId,
+                            memberFor);
+                        return;
+                    }
+                }
             }
         }
 
@@ -160,16 +171,78 @@ public partial class MessageConsumerWorker : BackgroundService
         return (memberFor < threshold, memberFor);
     }
 
-    private static bool ContainsLink(string? content)
+    /// <summary>
+    /// Checks if content contains links that could be suspicious.
+    /// Returns false if all links point to the same server (discord.com/channels/GUILD_ID/...)
+    /// </summary>
+    private static bool ContainsSuspiciousLink(string? content, ulong currentGuildId, out bool hasExternalLink)
     {
+        hasExternalLink = false;
+        
         if (string.IsNullOrWhiteSpace(content))
             return false;
-            
-        return LinkRegex().IsMatch(content);
+
+        // Check for non-Discord links (always suspicious for new users)
+        if (ExternalLinkRegex().IsMatch(content))
+        {
+            hasExternalLink = true;
+            return true;
+        }
+
+        // Check for discord.gg invites (need API to verify, mark as potentially suspicious)
+        if (DiscordInviteRegex().IsMatch(content))
+        {
+            hasExternalLink = true; // Will be verified via API later
+            return true;
+        }
+
+        // Check for discord.com/channels links - can verify guild ID directly
+        var channelMatches = DiscordChannelLinkRegex().Matches(content);
+        foreach (Match match in channelMatches)
+        {
+            if (ulong.TryParse(match.Groups[1].Value, out var guildId) && guildId != currentGuildId)
+            {
+                hasExternalLink = true;
+                return true;
+            }
+        }
+
+        // Has discord channel links but all are same-server
+        if (channelMatches.Count > 0)
+            return true; // Has links, but hasExternalLink is false
+
+        return false;
     }
 
-    [GeneratedRegex(@"https?://|discord\.gg/|t\.me/|bit\.ly/|tinyurl\.com/", RegexOptions.IgnoreCase)]
-    private static partial Regex LinkRegex();
+    /// <summary>
+    /// Resolves discord.gg invites to check if they're for the current server
+    /// </summary>
+    private async Task<bool> ContainsOnlyOwnServerInvitesAsync(string content, ulong currentGuildId)
+    {
+        var inviteMatches = DiscordInviteRegex().Matches(content);
+        if (inviteMatches.Count == 0)
+            return true; // No invites to check
+        
+        foreach (Match match in inviteMatches)
+        {
+            var code = match.Groups[1].Value;
+            var inviteGuildId = await _discord.ResolveInviteGuildIdAsync(code);
+            
+            if (inviteGuildId == null || inviteGuildId != currentGuildId)
+                return false; // External or unknown invite
+        }
+        
+        return true; // All invites are for this server
+    }
+
+    [GeneratedRegex(@"https?://(?!discord\.com|discord\.gg|discordapp\.com)|t\.me/|bit\.ly/|tinyurl\.com/", RegexOptions.IgnoreCase)]
+    private static partial Regex ExternalLinkRegex();
+
+    [GeneratedRegex(@"(?:discord\.gg|discord\.com/invite)/([a-zA-Z0-9-]+)", RegexOptions.IgnoreCase)]
+    private static partial Regex DiscordInviteRegex();
+
+    [GeneratedRegex(@"discord\.com/channels/(\d+)/\d+", RegexOptions.IgnoreCase)]
+    private static partial Regex DiscordChannelLinkRegex();
 
     public override void Dispose()
     {
