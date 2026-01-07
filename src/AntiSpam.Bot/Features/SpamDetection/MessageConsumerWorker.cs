@@ -264,13 +264,14 @@ public partial class MessageConsumerWorker : BackgroundService
     }
 
     /// <summary>
-    /// Resolves discord.gg invites to check if they're for the current server
+    /// Resolves discord.gg invites to check if they're for the current server.
+    /// Returns true ONLY if the message contains discord.gg invites AND all are for this server.
     /// </summary>
     private async Task<bool> ContainsOnlyOwnServerInvitesAsync(string content, ulong currentGuildId)
     {
         var inviteMatches = DiscordInviteRegex().Matches(content);
         if (inviteMatches.Count == 0)
-            return true; // No invites to check
+            return false; // No discord.gg invites - the suspicious link is something else
         
         foreach (Match match in inviteMatches)
         {
