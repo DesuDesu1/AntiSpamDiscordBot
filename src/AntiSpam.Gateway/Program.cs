@@ -222,13 +222,20 @@ public class DiscordGatewayWorker : BackgroundService
 
     private async Task OnMessageReceivedAsync(SocketMessage message)
     {
-        if (message is not SocketUserMessage)
+        if (message is not SocketUserMessage userMessage)
+            return;
+
+        if (message.Author.IsBot)
             return;
 
         if (message.Channel is not SocketGuildChannel guildChannel)
             return;
 
         var guildUser = message.Author as Discord.WebSocket.SocketGuildUser;
+        
+        _logger.LogInformation("Message from {User} in {Guild}/{Channel}: {ContentLen} chars", 
+            message.Author.Username, guildChannel.Guild.Name, message.Channel.Name, 
+            message.Content?.Length ?? 0);
         
         var @event = new MessageReceivedEvent
         {
@@ -240,7 +247,7 @@ public class DiscordGatewayWorker : BackgroundService
             AuthorId = message.Author.Id,
             AuthorUsername = message.Author.Username,
             Content = message.Content,
-            IsBot = message.Author.IsBot,
+            IsBot = false,
             AttachmentCount = message.Attachments.Count,
             AuthorJoinedAt = guildUser?.JoinedAt
         };
