@@ -10,19 +10,20 @@ namespace AntiSpam.Bot.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.RenameColumn(
-                name: "AllowedDomains",
+            migrationBuilder.AddColumn<string>(
+                name: "AllowedLinks",
                 table: "GuildConfigs",
-                newName: "AllowedLinks");
+                type: "text",
+                nullable: false,
+                defaultValue: "");
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.RenameColumn(
+            migrationBuilder.DropColumn(
                 name: "AllowedLinks",
-                table: "GuildConfigs",
-                newName: "AllowedDomains");
+                table: "GuildConfigs");
         }
     }
 }
