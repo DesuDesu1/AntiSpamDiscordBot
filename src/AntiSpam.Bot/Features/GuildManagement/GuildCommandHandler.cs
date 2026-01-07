@@ -118,6 +118,10 @@ public class GuildCommandHandler
             • Text similarity: {config.SimilarityThreshold:P0}
             • Time window: {config.DetectionWindowSeconds} sec
             
+            **New User Links:**
+            • Detection: {(config.DetectNewUserLinks ? "✅ Enabled" : "❌ Disabled")}
+            • New user threshold: {config.NewUserHoursThreshold}h
+            
             **Actions:**
             • Mute: {(config.MuteOnSpam ? $"✅ {config.MuteDurationMinutes} min" : "❌")}
             • Delete messages: {(config.DeleteMessages ? "✅" : "❌")}
