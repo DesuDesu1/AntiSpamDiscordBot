@@ -1,6 +1,6 @@
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using AntiSpam.Bot.Features.GuildManagement;
+using AntiSpam.Bot.Infrastructure.Kafka;
 using AntiSpam.Bot.Services.Cache;
 using AntiSpam.Bot.Services.Discord;
 using AntiSpam.Contracts;
@@ -11,7 +11,7 @@ namespace AntiSpam.Bot.Features.SpamDetection;
 
 public partial class MessageConsumerWorker : BackgroundService
 {
-    private readonly IConsumer<string, string> _consumer;
+    private readonly ConsumerConfig _config;
     private readonly SpamDetector _spamDetector;
     private readonly SpamActionService _spamAction;
     private readonly GuildConfigService _configService;
@@ -19,14 +19,14 @@ public partial class MessageConsumerWorker : BackgroundService
     private readonly ILogger<MessageConsumerWorker> _logger;
 
     public MessageConsumerWorker(
-        IConsumer<string, string> consumer,
+        ConsumerConfig config,
         SpamDetector spamDetector,
         SpamActionService spamAction,
         GuildConfigService configService,
         DiscordService discord,
         ILogger<MessageConsumerWorker> logger)
     {
-        _consumer = consumer;
+        _config = config;
         _spamDetector = spamDetector;
         _spamAction = spamAction;
         _configService = configService;
@@ -36,7 +36,17 @@ public partial class MessageConsumerWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _consumer.Subscribe(KafkaTopics.Messages);
+        var config = new ConsumerConfig(_config)
+        {
+            GroupId = "antispam-messages",
+            AutoOffsetReset = AutoOffsetReset.Earliest
+        };
+
+        using var consumer = new ConsumerBuilder<string, MessageReceivedEvent>(config)
+            .SetValueDeserializer(new SafeJsonDeserializer<MessageReceivedEvent>())
+            .Build();
+
+        consumer.Subscribe(KafkaTopics.Messages);
         _logger.LogInformation("Subscribed to topic: {Topic}", KafkaTopics.Messages);
 
         await Task.Yield();
@@ -45,11 +55,10 @@ public partial class MessageConsumerWorker : BackgroundService
         {
             try
             {
-                var result = _consumer.Consume(TimeSpan.FromSeconds(1));
-                if (result == null) continue;
+                var result = consumer.Consume(stoppingToken);
+                if (result?.Message?.Value == null) continue;
 
-                var message = JsonSerializer.Deserialize<MessageReceivedEvent>(result.Message.Value);
-                if (message == null) continue;
+                var message = result.Message.Value;
 
                 if (message.IsBot)
                 {
@@ -62,15 +71,19 @@ public partial class MessageConsumerWorker : BackgroundService
 
                 await ProcessMessageAsync(message);
 
-                _consumer.Commit(result);
+                consumer.Commit(result);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
             }
             catch (ConsumeException ex)
             {
-                _logger.LogError(ex, "Kafka consume error");
+                _logger.LogError(ex, "Kafka consume error at {Topic}", KafkaTopics.Messages);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing message");
+                _logger.LogError(ex, "Error processing message from Kafka");
             }
         }
     }
@@ -297,11 +310,4 @@ public partial class MessageConsumerWorker : BackgroundService
 
     [GeneratedRegex(@"discord\.com/channels/(\d+)/\d+", RegexOptions.IgnoreCase)]
     private static partial Regex DiscordChannelLinkRegex();
-
-    public override void Dispose()
-    {
-        _consumer.Close();
-        _consumer.Dispose();
-        base.Dispose();
-    }
 }

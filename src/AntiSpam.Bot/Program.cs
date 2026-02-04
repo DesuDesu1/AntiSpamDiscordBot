@@ -47,17 +47,14 @@ builder.Services.AddSingleton<DiscordRestClient>(sp =>
     return client;
 });
 
-// Kafka consumer for messages
-builder.Services.AddSingleton<IConsumer<string, string>>(_ =>
+// Kafka config
+var kafkaServers = builder.Configuration["Kafka:BootstrapServers"] ?? "localhost:9092";
+builder.Services.AddSingleton(new ConsumerConfig
 {
-    var config = new ConsumerConfig
-    {
-        BootstrapServers = builder.Configuration["Kafka:BootstrapServers"],
-        GroupId = "antispam-bot",
-        AutoOffsetReset = AutoOffsetReset.Earliest,
-        EnableAutoCommit = false
-    };
-    return new ConsumerBuilder<string, string>(config).Build();
+    BootstrapServers = kafkaServers,
+    GroupId = "antispam-bot-default",
+    AutoOffsetReset = AutoOffsetReset.Earliest,
+    EnableAutoCommit = false
 });
 
 // Cache
@@ -66,7 +63,10 @@ builder.Services.AddSingleton<MessageRepository>();
 // Spam detection
 builder.Services.AddSingleton<SpamDetector>();
 
-// Discord actions
+// Discord actions (use HttpClientFactory + Resilience)
+builder.Services.AddHttpClient(nameof(DiscordService))
+    .AddStandardResilienceHandler();
+
 builder.Services.AddSingleton<DiscordService>();
 builder.Services.AddSingleton<SpamActionService>();
 

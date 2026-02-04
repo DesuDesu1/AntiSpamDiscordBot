@@ -1,7 +1,7 @@
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using AntiSpam.Bot.Data;
 using AntiSpam.Bot.Data.Entities;
+using AntiSpam.Bot.Infrastructure.Kafka;
 using AntiSpam.Bot.Services.Discord;
 using AntiSpam.Contracts;
 using AntiSpam.Contracts.Events;
@@ -12,33 +12,36 @@ namespace AntiSpam.Bot.Features.Moderation;
 
 public partial class InteractionConsumerWorker : BackgroundService
 {
-    private readonly IConsumer<string, string> _consumer;
+    private readonly ConsumerConfig _config;
     private readonly DiscordService _discord;
     private readonly IDbContextFactory<BotDbContext> _dbFactory;
     private readonly ILogger<InteractionConsumerWorker> _logger;
 
     public InteractionConsumerWorker(
-        IServiceProvider services,
-        IConfiguration config,
+        ConsumerConfig config,
+        DiscordService discord,
+        IDbContextFactory<BotDbContext> dbFactory,
         ILogger<InteractionConsumerWorker> logger)
     {
-        _discord = services.GetRequiredService<DiscordService>();
-        _dbFactory = services.GetRequiredService<IDbContextFactory<BotDbContext>>();
+        _config = config;
+        _discord = discord;
+        _dbFactory = dbFactory;
         _logger = logger;
-
-        var kafkaConfig = new ConsumerConfig
-        {
-            BootstrapServers = config["Kafka:BootstrapServers"] ?? "localhost:9092",
-            GroupId = "antispam-interactions",
-            AutoOffsetReset = AutoOffsetReset.Latest,
-            EnableAutoCommit = false
-        };
-        _consumer = new ConsumerBuilder<string, string>(kafkaConfig).Build();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _consumer.Subscribe(KafkaTopics.Interactions);
+        var config = new ConsumerConfig(_config)
+        {
+            GroupId = "antispam-interactions",
+            AutoOffsetReset = AutoOffsetReset.Latest
+        };
+
+        using var consumer = new ConsumerBuilder<string, InteractionEvent>(config)
+            .SetValueDeserializer(new SafeJsonDeserializer<InteractionEvent>())
+            .Build();
+
+        consumer.Subscribe(KafkaTopics.Interactions);
         _logger.LogInformation("Subscribed to topic: {Topic}", KafkaTopics.Interactions);
 
         await Task.Yield();
@@ -47,23 +50,24 @@ public partial class InteractionConsumerWorker : BackgroundService
         {
             try
             {
-                var result = _consumer.Consume(TimeSpan.FromSeconds(1));
-                if (result == null) continue;
+                var result = consumer.Consume(stoppingToken);
+                if (result?.Message?.Value == null) continue;
 
-                var interaction = JsonSerializer.Deserialize<InteractionEvent>(result.Message.Value);
-                if (interaction == null) continue;
+                await ProcessInteractionAsync(result.Message.Value);
 
-                await ProcessInteractionAsync(interaction);
-
-                _consumer.Commit(result);
+                consumer.Commit(result);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
             }
             catch (ConsumeException ex)
             {
-                _logger.LogError(ex, "Kafka consume error");
+                _logger.LogError(ex, "Kafka consume error at {Topic}", KafkaTopics.Interactions);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing interaction");
+                _logger.LogError(ex, "Error processing interaction from Kafka");
             }
         }
     }
@@ -156,11 +160,4 @@ public partial class InteractionConsumerWorker : BackgroundService
 
     [GeneratedRegex(@"spam_(ban|release)_(\d+)")]
     private static partial Regex ButtonIdRegex();
-
-    public override void Dispose()
-    {
-        _consumer.Close();
-        _consumer.Dispose();
-        base.Dispose();
-    }
 }

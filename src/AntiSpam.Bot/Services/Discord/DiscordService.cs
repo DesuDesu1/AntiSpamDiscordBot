@@ -1,3 +1,5 @@
+using System.Net.Http;
+using System.Net.Http.Json;
 using AntiSpam.Bot.Data;
 using AntiSpam.Bot.Data.Entities;
 using Discord;
@@ -11,16 +13,21 @@ public class DiscordService
     private readonly DiscordRestClient _client;
     private readonly IDbContextFactory<BotDbContext> _dbFactory;
     private readonly ILogger<DiscordService> _logger;
+    private readonly IHttpClientFactory _httpClientFactory;
 
     public DiscordService(
         DiscordRestClient client,
         IDbContextFactory<BotDbContext> dbFactory,
-        ILogger<DiscordService> logger)
+        ILogger<DiscordService> logger,
+        IHttpClientFactory httpClientFactory)
     {
         _client = client;
         _dbFactory = dbFactory;
         _logger = logger;
+        _httpClientFactory = httpClientFactory;
     }
+
+    private HttpClient Http => _httpClientFactory.CreateClient(nameof(DiscordService));
 
     public async Task MuteUserAsync(ulong guildId, ulong userId, TimeSpan duration)
     {
@@ -79,6 +86,22 @@ public class DiscordService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to ban user {UserId}", userId);
+        }
+    }
+
+    public async Task SendFollowupAsync(string token, string message)
+    {
+        try
+        {
+            var applicationId = _client.CurrentUser.Id;
+            var url = $"https://discord.com/api/v10/webhooks/{applicationId}/{token}";
+            
+            var payload = new { content = message, flags = 64 };
+            await Http.PostAsJsonAsync(url, payload);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send followup via DiscordService");
         }
     }
 

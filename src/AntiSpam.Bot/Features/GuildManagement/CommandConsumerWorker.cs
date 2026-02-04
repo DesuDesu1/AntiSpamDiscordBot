@@ -1,43 +1,44 @@
 using System.Text.Json;
+using AntiSpam.Bot.Infrastructure.Kafka;
+using AntiSpam.Bot.Services.Discord;
 using AntiSpam.Contracts;
 using AntiSpam.Contracts.Events;
 using Confluent.Kafka;
-using Discord.Rest;
 
 namespace AntiSpam.Bot.Features.GuildManagement;
 
 public class CommandConsumerWorker : BackgroundService
 {
-    private readonly IConsumer<string, string> _consumer;
+    private readonly ConsumerConfig _config;
     private readonly GuildCommandHandler _commandHandler;
-    private readonly DiscordRestClient _discord;
-    private readonly HttpClient _http;
+    private readonly DiscordService _discord;
     private readonly ILogger<CommandConsumerWorker> _logger;
-    private static readonly string[] value = ["users", "roles", "everyone"];
 
     public CommandConsumerWorker(
-        IServiceProvider services,
-        IConfiguration config,
+        ConsumerConfig config,
+        GuildCommandHandler commandHandler,
+        DiscordService discord,
         ILogger<CommandConsumerWorker> logger)
     {
-        _commandHandler = services.GetRequiredService<GuildCommandHandler>();
-        _discord = services.GetRequiredService<DiscordRestClient>();
-        _http = new HttpClient();
+        _config = config;
+        _commandHandler = commandHandler;
+        _discord = discord;
         _logger = logger;
-
-        var kafkaConfig = new ConsumerConfig
-        {
-            BootstrapServers = config["Kafka:BootstrapServers"] ?? "localhost:9092",
-            GroupId = "antispam-commands",
-            AutoOffsetReset = AutoOffsetReset.Latest,
-            EnableAutoCommit = false
-        };
-        _consumer = new ConsumerBuilder<string, string>(kafkaConfig).Build();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _consumer.Subscribe(KafkaTopics.Commands);
+        var config = new ConsumerConfig(_config)
+        {
+            GroupId = "antispam-commands",
+            AutoOffsetReset = AutoOffsetReset.Latest
+        };
+
+        using var consumer = new ConsumerBuilder<string, SlashCommandEvent>(config)
+            .SetValueDeserializer(new SafeJsonDeserializer<SlashCommandEvent>())
+            .Build();
+
+        consumer.Subscribe(KafkaTopics.Commands);
         _logger.LogInformation("Subscribed to topic: {Topic}", KafkaTopics.Commands);
 
         await Task.Yield();
@@ -46,23 +47,24 @@ public class CommandConsumerWorker : BackgroundService
         {
             try
             {
-                var result = _consumer.Consume(TimeSpan.FromSeconds(1));
-                if (result == null) continue;
+                var result = consumer.Consume(stoppingToken);
+                if (result?.Message?.Value == null) continue;
 
-                var command = JsonSerializer.Deserialize<SlashCommandEvent>(result.Message.Value);
-                if (command == null) continue;
+                await ProcessCommandAsync(result.Message.Value);
 
-                await ProcessCommandAsync(command);
-
-                _consumer.Commit(result);
+                consumer.Commit(result);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
             }
             catch (ConsumeException ex)
             {
-                _logger.LogError(ex, "Kafka consume error");
+                _logger.LogError(ex, "Kafka consume error at {Topic}", KafkaTopics.Commands);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing command");
+                _logger.LogError(ex, "Error processing command from Kafka");
             }
         }
     }
@@ -118,31 +120,6 @@ public class CommandConsumerWorker : BackgroundService
 
     private async Task SendFollowupAsync(string token, string message)
     {
-        var applicationId = _discord.CurrentUser.Id;
-        var url = $"https://discord.com/api/v10/webhooks/{applicationId}/{token}";
-        
-        var payload = JsonSerializer.Serialize(new 
-        { 
-            content = message, 
-            flags = 64, // ephemeral
-            allowed_mentions = new { parse = value }
-        });
-        var content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
-        
-        var response = await _http.PostAsync(url, content);
-        
-        if (!response.IsSuccessStatusCode)
-        {
-            var body = await response.Content.ReadAsStringAsync();
-            _logger.LogWarning("Failed to send followup: {Status} - {Body}", response.StatusCode, body);
-        }
-    }
-
-    public override void Dispose()
-    {
-        _consumer.Close();
-        _consumer.Dispose();
-        _http.Dispose();
-        base.Dispose();
+        await _discord.SendFollowupAsync(token, message);
     }
 }
