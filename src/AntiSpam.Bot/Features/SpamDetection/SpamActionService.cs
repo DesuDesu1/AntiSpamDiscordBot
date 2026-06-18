@@ -35,10 +35,11 @@ public class SpamActionService
         string username,
         string content,
         List<ulong> channelIds,
-        List<(ulong ChannelId, ulong MessageId)> messagesToDelete)
+        List<(ulong ChannelId, ulong MessageId)> messagesToDelete,
+        IReadOnlyList<string> attachmentUrls)
     {
         var config = await _configService.GetOrCreateAsync(guildId);
-        
+
         if (!config.IsEnabled)
         {
             _logger.LogDebug("Spam detection disabled for guild {GuildId}", guildId);
@@ -54,25 +55,24 @@ public class SpamActionService
             return;
         }
 
-        // 1. Создаём инцидент
         var incident = await CreateIncidentAsync(guildId, userId, username, content, channelIds);
-        
-        // 2. Удаляем сообщения
+
+        // Mute before alerting so the alert can report whether the mute actually landed
+        // (it fails when the target outranks the bot). null = mute disabled.
+        bool? muteApplied = config.MuteOnSpam
+            ? await _discord.MuteUserAsync(guildId, userId, TimeSpan.FromMinutes(config.MuteDurationMinutes))
+            : null;
+
+        // Alert before deleting: the attachment image is re-hosted from its source URL,
+        // which dies once the spam message is removed.
+        if (config.AlertChannelId.HasValue)
+        {
+            await _discord.SendAlertAsync(guildId, config.AlertChannelId.Value, incident, config, attachmentUrls, muteApplied);
+        }
+
         if (config.DeleteMessages)
         {
             await _discord.BulkDeleteMessagesAsync(guildId, messagesToDelete);
-        }
-
-        // 3. Мутим пользователя
-        if (config.MuteOnSpam)
-        {
-            await _discord.MuteUserAsync(guildId, userId, TimeSpan.FromMinutes(config.MuteDurationMinutes));
-        }
-
-        // 4. Отправляем алерт модераторам
-        if (config.AlertChannelId.HasValue)
-        {
-            await _discord.SendAlertAsync(guildId, config.AlertChannelId.Value, incident, config);
         }
     }
 
@@ -86,10 +86,11 @@ public class SpamActionService
         string content,
         ulong channelId,
         ulong messageId,
-        TimeSpan? memberFor)
+        TimeSpan? memberFor,
+        IReadOnlyList<string> attachmentUrls)
     {
         var config = await _configService.GetOrCreateAsync(guildId);
-        
+
         if (!config.IsEnabled || !config.DetectNewUserLinks)
         {
             return;
@@ -116,22 +117,23 @@ public class SpamActionService
             $"[NEW USER - joined {memberForDisplay} ago] {content}", 
             new List<ulong> { channelId });
 
+        // Mute before alerting so the alert can report whether the mute actually landed
+        // (it fails when the target outranks the bot). null = mute disabled.
+        bool? muteApplied = config.MuteOnSpam
+            ? await _discord.MuteUserAsync(guildId, userId, TimeSpan.FromMinutes(config.MuteDurationMinutes))
+            : null;
+
+        // Alert before deleting: the attachment image is re-hosted from its source URL,
+        // which dies once the spam message is removed.
+        if (config.AlertChannelId.HasValue)
+        {
+            await _discord.SendNewUserLinkAlertAsync(guildId, config.AlertChannelId.Value, incident, memberFor, config, attachmentUrls, muteApplied);
+        }
+
         // Delete the message
         if (config.DeleteMessages)
         {
             await _discord.BulkDeleteMessagesAsync(guildId, new List<(ulong, ulong)> { (channelId, messageId) });
-        }
-
-        // Mute the user
-        if (config.MuteOnSpam)
-        {
-            await _discord.MuteUserAsync(guildId, userId, TimeSpan.FromMinutes(config.MuteDurationMinutes));
-        }
-
-        // Send alert to moderators
-        if (config.AlertChannelId.HasValue)
-        {
-            await _discord.SendNewUserLinkAlertAsync(guildId, config.AlertChannelId.Value, incident, memberFor, config);
         }
     }
 
@@ -170,35 +172,5 @@ public class SpamActionService
             incident.Id, username, guildId);
         
         return incident;
-    }
-
-    public async Task HandleIncidentActionAsync(long incidentId, ulong moderatorId, string moderatorName, bool ban)
-    {
-        await using var db = await _dbFactory.CreateDbContextAsync();
-
-        var incident = await db.SpamIncidents.FindAsync(incidentId);
-        if (incident == null || incident.Status != IncidentStatus.Pending)
-        {
-            return;
-        }
-
-        incident.Status = ban ? IncidentStatus.Banned : IncidentStatus.Released;
-        incident.HandledByUserId = moderatorId;
-        incident.HandledByUsername = moderatorName;
-        incident.HandledAt = DateTime.UtcNow;
-
-        if (ban)
-        {
-            await _discord.BanUserAsync(incident.GuildId, incident.UserId, "Spam detected");
-        }
-        else
-        {
-            await _discord.UnmuteUserAsync(incident.GuildId, incident.UserId);
-        }
-
-        await db.SaveChangesAsync();
-        
-        _logger.LogInformation("Incident #{Id} {Action} by {Moderator}", 
-            incidentId, ban ? "banned" : "released", moderatorName);
     }
 }

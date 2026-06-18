@@ -18,6 +18,11 @@ public sealed record MessageReceivedEvent
     /// Количество вложений (картинки, файлы)
     /// </summary>
     public int AttachmentCount { get; init; }
+
+    /// <summary>
+    /// URLs of the message attachments, used to show the image in moderator alerts.
+    /// </summary>
+    public IReadOnlyList<string> AttachmentUrls { get; init; } = Array.Empty<string>();
     
     /// <summary>
     /// When the user joined the guild (from Discord.NET cache, no API call)

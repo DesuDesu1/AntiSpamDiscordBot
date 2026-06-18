@@ -40,11 +40,17 @@ deploy/
 The bot needs the following so it can act on spam and alert your team:
 
 - **Moderate Members** to time out (mute) offenders.
+- **Ban Members** to ban from the alert's Ban button.
 - **Manage Messages** to delete spam.
-- **View Channel**, **Send Messages**, and **Embed Links** in the channel you use for
-  alerts.
+- **View Channel**, **Send Messages**, **Embed Links**, and **Attach Files** in the
+  channel you use for alerts (Attach Files is needed to show the re-hosted spam image).
 - The **Message Content** gateway intent must be enabled for the bot application in the
   Discord Developer Portal, otherwise the bot cannot read message text.
+
+Place the bot's role high in the server's role list. Discord enforces role hierarchy, so
+the bot cannot mute, ban, or delete messages for the server owner or any member whose
+highest role sits above the bot's. Those actions fail silently (they are logged, not
+surfaced to moderators).
 
 ### 2. Pick an alert channel
 

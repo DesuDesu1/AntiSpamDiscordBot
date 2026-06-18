@@ -6,6 +6,40 @@ namespace AntiSpam.Bot.Features.GuildManagement;
 
 public class GuildCommandHandler
 {
+    private const string HelpText = """
+        **Anti-Spam Bot**
+
+        I automatically catch two kinds of spam and can delete the messages, time the user out, and alert your moderators:
+        - The same or near-identical message posted across several channels in a short window.
+        - Brand-new members posting links before they have any history (common bot behaviour).
+
+        **Getting started**
+        1. `/antispam alert-channel` - pick a moderators-only channel for alerts.
+        2. `/antispam status` - review the current settings (every server starts with sensible defaults).
+        3. Tune anything below to taste.
+
+        **Detection**
+        `/antispam min-channels` - how many channels the same message must hit (2-10)
+        `/antispam similarity` - how alike messages must be to count as spam (50-100%)
+        `/antispam window` - time window for the check, in seconds (30-600)
+        `/antispam new-user-threshold` - how long someone counts as "new" for the link check (1-168h)
+
+        **Allowed links** (links new members may post freely)
+        `/antispam list-links`, `/antispam allow-link`, `/antispam remove-link`
+        Well-known sites (youtube, twitch, etc.) are allowed by default.
+
+        **Actions**
+        `/antispam mute` - time the offender out (on/off, duration in minutes)
+        `/antispam delete` - delete the detected spam (on/off)
+        `/antispam enable` - turn all protection on or off
+
+        **Permissions I need**
+        Grant my role: Moderate Members (timeout), Ban Members (the Ban button), Manage Messages (delete spam), and in the alert channel View Channel, Send Messages, Embed Links and Attach Files (to show the spam image).
+        Drag my role high in the role list: Discord will not let me mute, ban, or delete messages for the server owner or anyone whose top role sits above mine - those actions silently fail.
+
+        Using the `/antispam` commands themselves requires the **Manage Server** permission.
+        """;
+
     private readonly GuildConfigService _configService;
     private readonly DiscordRestClient _discord;
     private readonly ILogger<GuildCommandHandler> _logger;
@@ -27,6 +61,7 @@ public class GuildCommandHandler
         
         return subCommand switch
         {
+            "help" => HelpText,
             "status" => await HandleStatusAsync(guildId),
             "enable" => await HandleEnableAsync(guildId, GetBool(options, "enabled")),
             "alert-channel" => await HandleAlertChannelAsync(guildId, GetULong(options, "channel")),

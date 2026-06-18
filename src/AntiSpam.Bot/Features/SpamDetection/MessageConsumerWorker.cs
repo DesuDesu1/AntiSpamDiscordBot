@@ -136,7 +136,8 @@ public partial class MessageConsumerWorker : BackgroundService
                             message.Content,
                             message.ChannelId,
                             message.MessageId,
-                            memberFor);
+                            memberFor,
+                            message.AttachmentUrls);
                         return;
                     }
                 }
@@ -182,7 +183,8 @@ public partial class MessageConsumerWorker : BackgroundService
                 message.AuthorUsername,
                 message.Content,
                 result.ChannelIds,
-                messagesToDelete);
+                messagesToDelete,
+                message.AttachmentUrls);
         }
     }
 

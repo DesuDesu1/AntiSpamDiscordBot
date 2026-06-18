@@ -72,10 +72,23 @@ public class MessageRepository
     /// </summary>
     public async Task<bool> TryClaimActionAsync(ulong guildId, ulong userId, TimeSpan cooldown)
     {
-        var key = $"spam_handled:{guildId}:{userId}";
+        var key = ClaimKey(guildId, userId);
         return await _redis.StringSetAsync(key, "1", cooldown, When.NotExists);
+    }
+
+    /// <summary>
+    /// Clears a user's cached messages and the action-claim cooldown after a moderator handles
+    /// an incident. On release this stops the leftover window from instantly re-flagging the user,
+    /// and lets a genuinely renewed spam burst raise a fresh alert.
+    /// </summary>
+    public async Task ResetSpamStateAsync(ulong guildId, ulong userId)
+    {
+        await _redis.KeyDeleteAsync(new RedisKey[] { GetKey(guildId, userId), ClaimKey(guildId, userId) });
     }
 
     private static string GetKey(ulong guildId, ulong userId)
         => $"messages:{guildId}:{userId}";
+
+    private static string ClaimKey(ulong guildId, ulong userId)
+        => $"spam_handled:{guildId}:{userId}";
 }

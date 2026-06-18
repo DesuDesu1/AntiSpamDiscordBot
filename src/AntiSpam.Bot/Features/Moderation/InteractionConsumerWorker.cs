@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using AntiSpam.Bot.Data;
 using AntiSpam.Bot.Data.Entities;
 using AntiSpam.Bot.Infrastructure.Kafka;
+using AntiSpam.Bot.Services.Cache;
 using AntiSpam.Bot.Services.Discord;
 using AntiSpam.Contracts;
 using AntiSpam.Contracts.Events;
@@ -15,17 +16,20 @@ public partial class InteractionConsumerWorker : BackgroundService
     private readonly ConsumerConfig _config;
     private readonly DiscordService _discord;
     private readonly IDbContextFactory<BotDbContext> _dbFactory;
+    private readonly MessageRepository _messages;
     private readonly ILogger<InteractionConsumerWorker> _logger;
 
     public InteractionConsumerWorker(
         ConsumerConfig config,
         DiscordService discord,
         IDbContextFactory<BotDbContext> dbFactory,
+        MessageRepository messages,
         ILogger<InteractionConsumerWorker> logger)
     {
         _config = config;
         _discord = discord;
         _dbFactory = dbFactory;
+        _messages = messages;
         _logger = logger;
     }
 
@@ -139,23 +143,28 @@ public partial class InteractionConsumerWorker : BackgroundService
         incident.HandledByUsername = moderatorName;
         incident.HandledAt = DateTime.UtcNow;
 
+        var actionFailed = false;
         if (ban)
         {
-            await _discord.BanUserAsync(incident.GuildId, incident.UserId, "Spam detected");
+            actionFailed = !await _discord.BanUserAsync(incident.GuildId, incident.UserId, "Spam detected");
         }
         else
         {
             await _discord.UnmuteUserAsync(incident.GuildId, incident.UserId);
         }
 
+        // Give the user a clean slate: a released user must not be re-flagged by the leftover
+        // window, and a renewed burst can raise a fresh alert.
+        await _messages.ResetSpamStateAsync(incident.GuildId, incident.UserId);
+
         await db.SaveChangesAsync();
-        
+
         // Update alert message
         var action = ban ? "Banned" : "Released";
-        await _discord.UpdateAlertMessageAsync(incident.GuildId, incident, action, moderatorName);
-        
-        _logger.LogInformation("Incident #{Id} {Action} by {Moderator}", 
-            incidentId, action, moderatorName);
+        await _discord.UpdateAlertMessageAsync(incident.GuildId, incident, action, moderatorName, actionFailed);
+
+        _logger.LogInformation("Incident #{Id} {Action} by {Moderator} (failed={Failed})",
+            incidentId, action, moderatorName, actionFailed);
     }
 
     [GeneratedRegex(@"spam_(ban|release)_(\d+)")]

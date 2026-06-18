@@ -79,6 +79,10 @@ public class DiscordGatewayWorker : BackgroundService
             .WithName("antispam")
             .WithDescription("Anti-spam bot configuration")
             .AddOption(new SlashCommandOptionBuilder()
+                .WithName("help")
+                .WithDescription("Explain what the bot does and how to set it up")
+                .WithType(ApplicationCommandOptionType.SubCommand))
+            .AddOption(new SlashCommandOptionBuilder()
                 .WithName("status")
                 .WithDescription("Show current anti-spam settings")
                 .WithType(ApplicationCommandOptionType.SubCommand))
@@ -147,13 +151,17 @@ public class DiscordGatewayWorker : BackgroundService
                 var guild = _client.GetGuild(ulong.Parse(testGuildId));
                 if (guild != null)
                 {
-                    await guild.CreateApplicationCommandAsync(antispamCommand.Build());
+                    // Bulk overwrite replaces the guild's whole command set, so any command
+                    // that is no longer defined here (e.g. an old ghost command) gets removed.
+                    await guild.BulkOverwriteApplicationCommandAsync([antispamCommand.Build()]);
                     _logger.LogInformation("Registered slash commands to test guild {GuildId}", testGuildId);
                 }
             }
             else
             {
-                await _client.CreateGlobalApplicationCommandAsync(antispamCommand.Build());
+                // Bulk overwrite replaces the application's whole global command set, so stale
+                // registrations (e.g. a leftover /add-ban-word) are deleted rather than kept.
+                await _client.BulkOverwriteGlobalApplicationCommandsAsync([antispamCommand.Build()]);
                 _logger.LogInformation("Registered global slash commands");
             }
         }
@@ -249,6 +257,7 @@ public class DiscordGatewayWorker : BackgroundService
             Content = message.Content,
             IsBot = false,
             AttachmentCount = message.Attachments.Count,
+            AttachmentUrls = message.Attachments.Select(a => a.Url).ToList(),
             AuthorJoinedAt = guildUser?.JoinedAt
         };
 
