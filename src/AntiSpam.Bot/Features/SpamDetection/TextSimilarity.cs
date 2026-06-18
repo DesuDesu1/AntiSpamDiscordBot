@@ -1,16 +1,11 @@
 namespace AntiSpam.Bot.Features.SpamDetection;
 
 /// <summary>
-/// Вычисление похожести текстов на основе Jaccard similarity с шинглами
+/// Uses Jaccard similarity
 /// </summary>
 public static class TextSimilarity
 {
     private const int DefaultShingleSize = 3;
-
-    /// <summary>
-    /// Вычисляет Jaccard similarity между двумя строками
-    /// </summary>
-    /// <returns>Значение от 0.0 (разные) до 1.0 (идентичные)</returns>
     public static double Calculate(string text1, string text2, int shingleSize = DefaultShingleSize)
     {
         var shingles1 = GetShingles(Normalize(text1), shingleSize);
@@ -35,10 +30,7 @@ public static class TextSimilarity
         
         return (double)intersection / union;
     }
-
-    /// <summary>
-    /// Генерирует шинглы (n-граммы символов)
-    /// </summary>
+    
     private static HashSet<string> GetShingles(string text, int size)
     {
         var shingles = new HashSet<string>();
@@ -60,10 +52,7 @@ public static class TextSimilarity
         return shingles;
     }
 
-    /// <summary>
-    /// Нормализует текст для сравнения
-    /// </summary>
-    public static string Normalize(string content)
+    private static string Normalize(string content)
     {
         if (string.IsNullOrEmpty(content))
             return string.Empty;

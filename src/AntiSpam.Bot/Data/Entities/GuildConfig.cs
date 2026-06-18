@@ -56,10 +56,33 @@ public class GuildConfig
     public int NewUserHoursThreshold { get; set; } = 24;
     
     /// <summary>
-    /// Allowed link patterns for new user link detection.
-    /// Can be full URLs, domains, or partial matches (e.g., "youtube.com", "twitch.tv/mychannel", "github.com/myorg")
+    /// Well-known domains every server starts with, so new users can post common links
+    /// without being flagged. Seeded into <see cref="AllowedLinks"/> as a starting template —
+    /// owners see them in <c>/antispam list-links</c> and can remove any they don't want.
     /// </summary>
-    public List<string> AllowedLinks { get; set; } = new();
+    public static readonly string[] DefaultAllowedLinks =
+    [
+        "youtube.com",
+        "youtu.be",
+        "twitch.tv",
+        "tenor.com",
+        "giphy.com",
+        "imgur.com",
+        "reddit.com",
+        "twitter.com",
+        "x.com",
+        "spotify.com",
+        "soundcloud.com",
+        "github.com",
+        "wikipedia.org",
+    ];
+
+    /// <summary>
+    /// Allowed link patterns for new user link detection.
+    /// Can be full URLs, domains, or partial matches (e.g., "youtube.com", "twitch.tv/mychannel", "github.com/myorg").
+    /// Seeded from <see cref="DefaultAllowedLinks"/> for new guilds; owners can add or remove entries.
+    /// </summary>
+    public List<string> AllowedLinks { get; set; } = new(DefaultAllowedLinks);
     
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }

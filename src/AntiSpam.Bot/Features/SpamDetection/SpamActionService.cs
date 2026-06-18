@@ -1,6 +1,7 @@
 using AntiSpam.Bot.Data;
 using AntiSpam.Bot.Data.Entities;
 using AntiSpam.Bot.Features.GuildManagement;
+using AntiSpam.Bot.Services.Cache;
 using AntiSpam.Bot.Services.Discord;
 using Microsoft.EntityFrameworkCore;
 
@@ -11,17 +12,20 @@ public class SpamActionService
     private readonly DiscordService _discord;
     private readonly IDbContextFactory<BotDbContext> _dbFactory;
     private readonly GuildConfigService _configService;
+    private readonly MessageRepository _messages;
     private readonly ILogger<SpamActionService> _logger;
 
     public SpamActionService(
         DiscordService discord,
         IDbContextFactory<BotDbContext> dbFactory,
         GuildConfigService configService,
+        MessageRepository messages,
         ILogger<SpamActionService> logger)
     {
         _discord = discord;
         _dbFactory = dbFactory;
         _configService = configService;
+        _messages = messages;
         _logger = logger;
     }
 
@@ -38,6 +42,15 @@ public class SpamActionService
         if (!config.IsEnabled)
         {
             _logger.LogDebug("Spam detection disabled for guild {GuildId}", guildId);
+            return;
+        }
+
+        // Collapse a burst into one action: only the first message past the threshold acts,
+        // the rest of the in-flight messages (and any redelivery) are skipped for this window.
+        var cooldown = TimeSpan.FromSeconds(config.DetectionWindowSeconds);
+        if (!await _messages.TryClaimActionAsync(guildId, userId, cooldown))
+        {
+            _logger.LogDebug("Skipping duplicate spam action for user {User} in guild {Guild} (within cooldown)", userId, guildId);
             return;
         }
 
@@ -82,7 +95,16 @@ public class SpamActionService
             return;
         }
 
-        var memberForDisplay = memberFor.HasValue 
+        // Same burst-collapse guard: a new user dropping a link in several channels
+        // should produce one alert, not one per channel.
+        var cooldown = TimeSpan.FromSeconds(config.DetectionWindowSeconds);
+        if (!await _messages.TryClaimActionAsync(guildId, userId, cooldown))
+        {
+            _logger.LogDebug("Skipping duplicate new-user-link action for user {User} in guild {Guild} (within cooldown)", userId, guildId);
+            return;
+        }
+
+        var memberForDisplay = memberFor.HasValue
             ? FormatDuration(memberFor.Value) 
             : "unknown";
 

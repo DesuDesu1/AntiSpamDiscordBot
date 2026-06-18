@@ -64,6 +64,18 @@ public class MessageRepository
         await _redis.KeyDeleteAsync(key);
     }
 
-    private static string GetKey(ulong guildId, ulong userId) 
+    /// <summary>
+    /// Atomically claims the right to act on this user once per cooldown window.
+    /// Returns true only for the first caller; later messages from the same spam burst
+    /// (and any Kafka redelivery or second bot replica) get false and skip acting,
+    /// so one burst produces a single alert instead of one per message.
+    /// </summary>
+    public async Task<bool> TryClaimActionAsync(ulong guildId, ulong userId, TimeSpan cooldown)
+    {
+        var key = $"spam_handled:{guildId}:{userId}";
+        return await _redis.StringSetAsync(key, "1", cooldown, When.NotExists);
+    }
+
+    private static string GetKey(ulong guildId, ulong userId)
         => $"messages:{guildId}:{userId}";
 }
