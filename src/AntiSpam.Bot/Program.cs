@@ -1,4 +1,5 @@
 using AntiSpam.Bot.Data;
+using AntiSpam.Bot.Infrastructure;
 using AntiSpam.Bot.Features.GuildManagement;
 using AntiSpam.Bot.Features.Moderation;
 using AntiSpam.Bot.Features.SpamDetection;
@@ -11,6 +12,10 @@ using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;
 
 var builder = Host.CreateApplicationBuilder(args);
+
+// Initialise at-rest encryption for stored message content (Discord dev policy).
+ContentCipher.Init(builder.Configuration["Encryption:Key"]
+    ?? throw new InvalidOperationException("Encryption:Key is not configured"));
 
 // Build PostgreSQL connection string
 var pgConnectionString = builder.Configuration.GetConnectionString("Database");

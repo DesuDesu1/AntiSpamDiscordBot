@@ -38,6 +38,10 @@ public class GuildCommandHandler
         Drag my role high in the role list: Discord will not let me mute, ban, or delete messages for the server owner or anyone whose top role sits above mine - those actions silently fail.
 
         Using the `/antispam` commands themselves requires the **Manage Server** permission.
+
+        **Privacy**
+        Privacy policy: <https://github.com/DesuDesu1/AntiSpamDiscordBot/blob/main/PRIVACY.md>
+        Flagged-spam records are auto-deleted after 7 days. For data-deletion requests or questions, contact @nanashi1725 on Discord or ddesuone@gmail.com.
         """;
 
     private readonly GuildConfigService _configService;

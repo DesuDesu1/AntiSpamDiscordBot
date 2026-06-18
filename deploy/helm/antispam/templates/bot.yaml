@@ -54,5 +54,10 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secrets
                   key: postgres-password
+            - name: Encryption__Key
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: encryption-key
           resources:
             {{- toYaml .Values.resources.bot | nindent 12 }}

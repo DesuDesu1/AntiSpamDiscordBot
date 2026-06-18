@@ -81,5 +81,6 @@ jobs:
             --set discord.token=${{ secrets.DISCORD_TOKEN }} \
             --set discord.ownerId=${{ secrets.DISCORD_OWNER_ID }} \
             --set postgresql.password=${{ secrets.POSTGRES_PASSWORD }} \
+            --set encryption.key=${{ secrets.ENCRYPTION_KEY }} \
             --namespace antispam \
             --create-namespace

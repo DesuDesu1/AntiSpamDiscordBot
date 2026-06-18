@@ -18,6 +18,10 @@ discord:
   token: ""     # Set via --set or secrets
   ownerId: ""   # Your Discord user ID (enable Developer Mode → right-click yourself → Copy ID)
 
+# At-rest encryption of stored message content (Discord developer policy)
+encryption:
+  key: ""       # base64-encoded 32-byte key; set via --set or secrets. Generate: openssl rand -base64 32
+
 # Kafka
 kafka:
   enabled: true

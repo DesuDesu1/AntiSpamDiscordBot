@@ -1,4 +1,5 @@
 using AntiSpam.Bot.Data.Entities;
+using AntiSpam.Bot.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 
@@ -42,7 +43,13 @@ public class BotDbContext : DbContext
         modelBuilder.Entity<SpamIncident>(entity =>
         {
             entity.HasKey(e => e.Id);
-            
+
+            // Encrypt the stored message content at rest (Discord developer policy).
+            entity.Property(e => e.Content)
+                .HasConversion(
+                    v => ContentCipher.Encrypt(v),
+                    v => ContentCipher.Decrypt(v));
+
             entity.Property(e => e.GuildId)
                 .HasConversion<decimal>();
             
