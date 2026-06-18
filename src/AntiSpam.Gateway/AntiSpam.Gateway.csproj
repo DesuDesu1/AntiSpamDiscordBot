@@ -16,4 +16,10 @@
   <ItemGroup>
     <ProjectReference Include="..\AntiSpam.Contracts\AntiSpam.Contracts.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="desubot_avatar.gif">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
 </Project>

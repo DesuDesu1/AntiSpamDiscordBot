@@ -15,7 +15,8 @@ bot:
 
 # Discord
 discord:
-  token: ""  # Set via --set or secrets
+  token: ""     # Set via --set or secrets
+  ownerId: ""   # Your Discord user ID (enable Developer Mode → right-click yourself → Copy ID)
 
 # Kafka
 kafka:

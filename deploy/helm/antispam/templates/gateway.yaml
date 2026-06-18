@@ -24,6 +24,11 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secrets
                   key: discord-token
+            - name: Discord__OwnerId
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: discord-owner-id
             - name: Kafka__BootstrapServers
               valueFrom:
                 configMapKeyRef:

@@ -78,6 +78,7 @@ builder.Services.AddSingleton<GuildCommandHandler>();
 builder.Services.AddHostedService<MessageConsumerWorker>();
 builder.Services.AddHostedService<InteractionConsumerWorker>();
 builder.Services.AddHostedService<CommandConsumerWorker>();
+builder.Services.AddHostedService<IncidentCleanupWorker>();
 
 var app = builder.Build();
 

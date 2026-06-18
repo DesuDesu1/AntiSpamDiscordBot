@@ -59,6 +59,7 @@ public class DiscordGatewayWorker : BackgroundService
         _client.ButtonExecuted += OnButtonExecutedAsync;
         _client.ReactionAdded += OnReactionAddedAsync;
         _client.SlashCommandExecuted += OnSlashCommandExecutedAsync;
+        _client.SlashCommandExecuted += OnDesubotCommandExecutedAsync;
 
         var token = _config["Discord:Token"] 
             ?? throw new InvalidOperationException("Discord:Token not configured");
@@ -153,7 +154,8 @@ public class DiscordGatewayWorker : BackgroundService
                 {
                     // Bulk overwrite replaces the guild's whole command set, so any command
                     // that is no longer defined here (e.g. an old ghost command) gets removed.
-                    await guild.BulkOverwriteApplicationCommandAsync([antispamCommand.Build()]);
+                    var desubotCommand = BuildDesubotCommand();
+                    await guild.BulkOverwriteApplicationCommandAsync([antispamCommand.Build(), desubotCommand]);
                     _logger.LogInformation("Registered slash commands to test guild {GuildId}", testGuildId);
                 }
             }
@@ -161,7 +163,8 @@ public class DiscordGatewayWorker : BackgroundService
             {
                 // Bulk overwrite replaces the application's whole global command set, so stale
                 // registrations (e.g. a leftover /add-ban-word) are deleted rather than kept.
-                await _client.BulkOverwriteGlobalApplicationCommandsAsync([antispamCommand.Build()]);
+                var desubotCommand = BuildDesubotCommand();
+                await _client.BulkOverwriteGlobalApplicationCommandsAsync([antispamCommand.Build(), desubotCommand]);
                 _logger.LogInformation("Registered global slash commands");
             }
         }
@@ -171,7 +174,73 @@ public class DiscordGatewayWorker : BackgroundService
         }
     }
 
-    /// <summary>
+    private static ApplicationCommandProperties BuildDesubotCommand() =>
+        new SlashCommandBuilder()
+            .WithName("desubot")
+            .WithDescription("Bot owner commands")
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("set-avatar")
+                .WithDescription("Set the bot's avatar (owner only)")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption("url", ApplicationCommandOptionType.String,
+                    "Direct image/GIF URL, or omit to reset to the default desubot avatar",
+                    isRequired: false))
+            .Build();
+
+    private async Task OnDesubotCommandExecutedAsync(SocketSlashCommand command)
+    {
+        if (command.CommandName != "desubot") return;
+
+        var ownerIdStr = _config["Discord:OwnerId"];
+        if (string.IsNullOrEmpty(ownerIdStr) || !ulong.TryParse(ownerIdStr, out var ownerId)
+            || command.User.Id != ownerId)
+        {
+            await command.RespondAsync("Not authorized.", ephemeral: true);
+            return;
+        }
+
+        var subCommand = command.Data.Options.First();
+        if (subCommand.Name != "set-avatar") return;
+
+        await command.DeferAsync(ephemeral: true);
+
+        try
+        {
+            var urlOpt = subCommand.Options?.FirstOrDefault(o => o.Name == "url")?.Value as string;
+            Stream imageStream;
+
+            if (!string.IsNullOrEmpty(urlOpt))
+            {
+                using var http = new HttpClient();
+                http.DefaultRequestHeaders.UserAgent.ParseAdd("desubot/1.0");
+                imageStream = await http.GetStreamAsync(urlOpt);
+            }
+            else
+            {
+                // Default bundled avatar — resolved relative to the assembly location
+                var dir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!;
+                var gifPath = Path.Combine(dir, "desubot_avatar.gif");
+                if (!File.Exists(gifPath))
+                    gifPath = Path.Combine(AppContext.BaseDirectory, "desubot_avatar.gif");
+                imageStream = File.OpenRead(gifPath);
+            }
+
+            await using (imageStream)
+            {
+                await _client.CurrentUser.ModifyAsync(props =>
+                    props.Avatar = new Image(imageStream));
+            }
+
+            await command.FollowupAsync("Avatar updated!", ephemeral: true);
+            _logger.LogInformation("Bot avatar updated by owner {UserId}", command.User.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to set avatar");
+            await command.FollowupAsync($"Failed: {ex.Message}", ephemeral: true);
+        }
+    }
+
     /// <summary>
     /// Convert Discord option value to a JSON-serializable primitive.
     /// ISnowflakeEntity is base for all Discord entities (channels, users, roles, etc.)

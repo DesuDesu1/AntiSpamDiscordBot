@@ -79,6 +79,7 @@ jobs:
             --set bot.image.repository=ghcr.io/desudesu1/antispam-bot \
             --set bot.image.tag=${{ github.sha }} \
             --set discord.token=${{ secrets.DISCORD_TOKEN }} \
+            --set discord.ownerId=${{ secrets.DISCORD_OWNER_ID }} \
             --set postgresql.password=${{ secrets.POSTGRES_PASSWORD }} \
             --namespace antispam \
             --create-namespace
