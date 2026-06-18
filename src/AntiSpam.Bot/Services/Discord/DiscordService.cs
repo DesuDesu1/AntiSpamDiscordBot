@@ -245,6 +245,28 @@ public class DiscordService
     }
 
     /// <summary>
+    /// Best-effort avatar url for the offender, so the alert can show their face like other bots do.
+    /// Falls back to the global avatar, then the default avatar; returns null only if everything fails.
+    /// </summary>
+    private async Task<string?> TryGetAvatarUrlAsync(IGuild guild, ulong userId)
+    {
+        try
+        {
+            var member = await guild.GetUserAsync(userId);
+            if (member != null)
+                return member.GetGuildAvatarUrl() ?? member.GetAvatarUrl() ?? member.GetDefaultAvatarUrl();
+
+            var user = await _client.GetUserAsync(userId);
+            return user?.GetAvatarUrl() ?? user?.GetDefaultAvatarUrl();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to resolve avatar for user {UserId}", userId);
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Builds the mute status line for an alert: applied, failed (likely outranks the bot), or disabled.
     /// </summary>
     private static string MuteStatusLine(bool? muteApplied, GuildConfig config) => muteApplied switch
@@ -278,8 +300,10 @@ public class DiscordService
                 : (incident.Content.Length > 200 ? incident.Content[..200] + "..." : incident.Content);
 
             var images = await DownloadImagesAsync(attachmentUrls);
+            var avatarUrl = await TryGetAvatarUrlAsync(guild, incident.UserId);
 
             var embedBuilder = new EmbedBuilder()
+                .WithAuthor($"{incident.Username} ({incident.UserId})", avatarUrl)
                 .WithTitle("🚨 Spam Detected")
                 .WithColor(Color.Red)
                 .WithDescription($"**User:** <@{incident.UserId}> ({incident.Username})\n" +
@@ -352,6 +376,12 @@ public class DiscordService
                 .WithFooter($"Incident #{incident.Id}")
                 .WithTimestamp(DateTimeOffset.UtcNow);
 
+            // Carry over the user + avatar header from the original alert (the user may already
+            // be banned and no longer fetchable, so reuse the embed we posted rather than refetch).
+            var existingAuthor = message.Embeds.FirstOrDefault()?.Author;
+            if (existingAuthor != null)
+                embedBuilder.WithAuthor(existingAuthor.Value.Name, existingAuthor.Value.IconUrl);
+
             // Keep the re-hosted images in the embed gallery: the alert message still carries the
             // attachments, so editing preserves them as long as we don't touch m.Attachments.
             // Image attachments report a Width; rebuild the same shared-url gallery over them.
@@ -409,8 +439,10 @@ public class DiscordService
                 : "unknown";
 
             var images = await DownloadImagesAsync(attachmentUrls);
+            var avatarUrl = await TryGetAvatarUrlAsync(guild, incident.UserId);
 
             var embedBuilder = new EmbedBuilder()
+                .WithAuthor($"{incident.Username} ({incident.UserId})", avatarUrl)
                 .WithTitle("⚠️ Suspicious New User - Link Posted")
                 .WithColor(Color.Orange)
                 .WithDescription($"**User:** <@{incident.UserId}> ({incident.Username})\n" +
