@@ -34,5 +34,15 @@ spec:
                 configMapKeyRef:
                   name: {{ .Release.Name }}-config
                   key: KAFKA_BOOTSTRAP_SERVERS
+            - name: Internal__BotBaseUrl
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-config
+                  key: BOT_INTERNAL_BASE_URL
+            - name: Internal__ApiKey
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: internal-api-key
           resources:
             {{- toYaml .Values.resources.gateway | nindent 12 }}

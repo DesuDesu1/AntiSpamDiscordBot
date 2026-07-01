@@ -22,7 +22,7 @@ namespace AntiSpam.Bot.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("AntiSpam.Bot.Data.Entities.GuildConfig", b =>
+            modelBuilder.Entity("AntiSpam.Bot.Domain.GuildManagement.GuildConfig", b =>
                 {
                     b.Property<decimal>("GuildId")
                         .ValueGeneratedOnAdd()
@@ -30,6 +30,10 @@ namespace AntiSpam.Bot.Migrations
 
                     b.Property<decimal?>("AlertChannelId")
                         .HasColumnType("numeric(20,0)");
+
+                    b.Property<string>("AllowedInviteServers")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<string>("AllowedLinks")
                         .IsRequired()
@@ -70,10 +74,10 @@ namespace AntiSpam.Bot.Migrations
 
                     b.HasKey("GuildId");
 
-                    b.ToTable("GuildConfigs");
+                    b.ToTable("GuildConfigs", (string)null);
                 });
 
-            modelBuilder.Entity("AntiSpam.Bot.Data.Entities.SpamIncident", b =>
+            modelBuilder.Entity("AntiSpam.Bot.Domain.SpamIncident.SpamIncident", b =>
                 {
                     b.Property<long>("Id")
                         .ValueGeneratedOnAdd()
@@ -133,7 +137,7 @@ namespace AntiSpam.Bot.Migrations
 
                     b.HasIndex("GuildId", "Status");
 
-                    b.ToTable("SpamIncidents");
+                    b.ToTable("SpamIncidents", (string)null);
                 });
 #pragma warning restore 612, 618
         }

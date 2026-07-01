@@ -8,3 +8,4 @@ data:
   POSTGRES_HOST: "{{ .Release.Name }}-postgresql"
   POSTGRES_DATABASE: {{ .Values.postgresql.database | quote }}
   POSTGRES_USERNAME: {{ .Values.postgresql.username | quote }}
+  BOT_INTERNAL_BASE_URL: "http://{{ .Release.Name }}-bot:8080"
