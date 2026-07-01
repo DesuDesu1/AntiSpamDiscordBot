@@ -59,5 +59,23 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secrets
                   key: encryption-key
+            - name: Internal__ApiKey
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: internal-api-key
+          ports:
+            - containerPort: 8080
           resources:
             {{- toYaml .Values.resources.bot | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-bot
+spec:
+  selector:
+    app: bot
+  ports:
+    - port: 8080
+      targetPort: 8080

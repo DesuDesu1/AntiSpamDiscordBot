@@ -1,9 +1,13 @@
+using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using AntiSpam.Contracts;
 using AntiSpam.Contracts.Events;
 using Confluent.Kafka;
 using Discord;
 using Discord.WebSocket;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Http.Resilience;
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddHostedService<DiscordGatewayWorker>();
@@ -11,8 +15,8 @@ builder.Services.AddSingleton<DiscordSocketClient>(_ =>
 {
     var config = new DiscordSocketConfig
     {
-        GatewayIntents = GatewayIntents.Guilds 
-            | GatewayIntents.GuildMessages 
+        GatewayIntents = GatewayIntents.Guilds
+            | GatewayIntents.GuildMessages
             | GatewayIntents.MessageContent
             | GatewayIntents.GuildMessageReactions
     };
@@ -29,6 +33,18 @@ builder.Services.AddSingleton<IProducer<string, string>>(sp =>
     return new ProducerBuilder<string, string>(config).Build();
 });
 
+// Slash commands and moderation clicks go straight to Bot's internal API instead of Kafka -
+// they're human-rate and the interaction is already deferred by the time we call this.
+builder.Services.AddHttpClient("BotInternal", (sp, client) =>
+    {
+        var baseUrl = sp.GetRequiredService<IConfiguration>()["Internal:BotBaseUrl"] ?? "http://antispam-bot:8080";
+        client.BaseAddress = new Uri(baseUrl);
+        var apiKey = sp.GetRequiredService<IConfiguration>()["Internal:ApiKey"];
+        if (!string.IsNullOrEmpty(apiKey))
+            client.DefaultRequestHeaders.Add("X-Internal-Key", apiKey);
+    })
+    .AddStandardResilienceHandler();
+
 var host = builder.Build();
 host.Run();
 
@@ -36,17 +52,20 @@ public class DiscordGatewayWorker : BackgroundService
 {
     private readonly DiscordSocketClient _client;
     private readonly IProducer<string, string> _producer;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _config;
     private readonly ILogger<DiscordGatewayWorker> _logger;
 
     public DiscordGatewayWorker(
         DiscordSocketClient client,
         IProducer<string, string> producer,
+        IHttpClientFactory httpClientFactory,
         IConfiguration config,
         ILogger<DiscordGatewayWorker> logger)
     {
         _client = client;
         _producer = producer;
+        _httpClientFactory = httpClientFactory;
         _config = config;
         _logger = logger;
     }
@@ -142,6 +161,25 @@ public class DiscordGatewayWorker : BackgroundService
                 .WithDescription("Set how long a user is considered 'new'")
                 .WithType(ApplicationCommandOptionType.SubCommand)
                 .AddOption("hours", ApplicationCommandOptionType.Integer, "Hours (1-168, default 24)", isRequired: true, minValue: 1, maxValue: 168))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("link-detection")
+                .WithDescription("Turn new-member link detection on or off (a common false-positive source)")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption("enabled", ApplicationCommandOptionType.Boolean, "Flag new members who post external links", isRequired: true))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("allow-invite")
+                .WithDescription("Allow new members to post invites to another server")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption("invite", ApplicationCommandOptionType.String, "Invite link to the server to allow (e.g. discord.gg/xyz)", isRequired: true))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("remove-invite")
+                .WithDescription("Remove a server from the invite allow-list")
+                .WithType(ApplicationCommandOptionType.SubCommand)
+                .AddOption("invite", ApplicationCommandOptionType.String, "Invite link, or the server id shown in list-invites", isRequired: true))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("list-invites")
+                .WithDescription("List servers whose invites new members may post")
+                .WithType(ApplicationCommandOptionType.SubCommand))
             .WithDefaultMemberPermissions(GuildPermission.ManageGuild);
 
         try
@@ -242,58 +280,46 @@ public class DiscordGatewayWorker : BackgroundService
     }
 
     /// <summary>
-    /// Convert Discord option value to a JSON-serializable primitive.
-    /// ISnowflakeEntity is base for all Discord entities (channels, users, roles, etc.)
+    /// Converts a Discord option value to a JSON node for the request body. This is the transport
+    /// boundary: Discord.Net hands us <see cref="object"/>, we turn it into a primitive JSON value
+    /// (snowflake entities collapse to their id) so Bot can bind it to the typed command it owns.
     /// </summary>
-    private static object ConvertOptionValue(object? value)
+    private static JsonNode? OptionValueToJson(object? value) => value switch
     {
-        if (value is null) return "";
-        if (value is ISnowflakeEntity entity) return entity.Id.ToString();
-        if (value is bool or string or int or long or double or ulong or float) return value;
-        return value.ToString() ?? "";
-    }
+        null => null,
+        ISnowflakeEntity entity => JsonValue.Create(entity.Id),
+        bool b => JsonValue.Create(b),
+        long l => JsonValue.Create(l),
+        int i => JsonValue.Create(i),
+        double d => JsonValue.Create(d),
+        string s => JsonValue.Create(s),
+        _ => JsonValue.Create(value.ToString())
+    };
 
     private async Task OnSlashCommandExecutedAsync(SocketSlashCommand command)
     {
         if (command.CommandName != "antispam") return;
         if (command.GuildId == null) return;
 
-        // Defer first to acknowledge the interaction
+        // Acknowledge within the 3s deadline; we then have 15 min to follow up with Bot's reply.
         await command.DeferAsync(ephemeral: true);
 
-        // Forward to Kafka for processing by Bot
         var subCommand = command.Data.Options.First();
-        
-        // Convert ALL options to serializable primitives only
-        var options = new Dictionary<string, object>();
+
+        // Dispatch is the route: the subcommand name selects Bot's per-command endpoint. The body
+        // is the guild plus each option under its own name - Bot binds it to the command DTO it owns,
+        // so no command contract is shared across the two services.
+        var body = new JsonObject { ["guildId"] = JsonValue.Create(command.GuildId.Value) };
         if (subCommand.Options != null)
         {
             foreach (var opt in subCommand.Options)
-            {
-                options[opt.Name] = ConvertOptionValue(opt.Value);
-                _logger.LogDebug("Option {Name}: {Type} -> {Value}", 
-                    opt.Name, opt.Value?.GetType().Name ?? "null", options[opt.Name]);
-            }
+                body[opt.Name] = OptionValueToJson(opt.Value);
         }
 
-        var @event = new SlashCommandEvent
-        {
-            EventId = Guid.NewGuid(),
-            Timestamp = DateTimeOffset.UtcNow,
-            GuildId = command.GuildId.Value,
-            ChannelId = command.Channel.Id,
-            UserId = command.User.Id,
-            Username = command.User.Username,
-            CommandName = command.CommandName,
-            SubCommandName = subCommand.Name,
-            Options = options,
-            InteractionId = command.Id,
-            InteractionToken = command.Token
-        };
+        var response = await PostCommandAsync(subCommand.Name, body);
+        await command.FollowupAsync(response ?? "❌ An error occurred processing your command.", ephemeral: true);
 
-        await PublishAsync(KafkaTopics.Commands, command.GuildId.Value.ToString(), @event);
-        
-        _logger.LogInformation("Slash command /{Command} {SubCommand} from {User} in guild {Guild}", 
+        _logger.LogInformation("Slash command /{Command} {SubCommand} from {User} in guild {Guild}",
             command.CommandName, subCommand.Name, command.User.Username, command.GuildId);
     }
 
@@ -336,25 +362,17 @@ public class DiscordGatewayWorker : BackgroundService
     private async Task OnButtonExecutedAsync(SocketMessageComponent component)
     {
         if (component.GuildId == null) return;
-        
-        await component.DeferAsync();
-        
-        var @event = new InteractionEvent
-        {
-            EventId = Guid.NewGuid(),
-            Timestamp = DateTimeOffset.UtcNow,
-            GuildId = component.GuildId.Value,
-            ChannelId = component.Channel.Id,
-            UserId = component.User.Id,
-            Username = component.User.Username,
-            Type = ModInteractionType.Button,
-            CustomId = component.Data.CustomId,
-            MessageId = component.Message.Id
-        };
 
-        await PublishAsync(KafkaTopics.Interactions, component.User.Id.ToString(), @event);
-        
-        _logger.LogInformation("Button {CustomId} clicked by {User}", 
+        await component.DeferAsync();
+
+        await PostInternalAsync("/internal/interactions/button", new
+        {
+            userId = component.User.Id,
+            username = component.User.Username,
+            customId = component.Data.CustomId
+        });
+
+        _logger.LogInformation("Button {CustomId} clicked by {User}",
             component.Data.CustomId, component.User.Username);
     }
 
@@ -369,25 +387,19 @@ public class DiscordGatewayWorker : BackgroundService
         var emote = reaction.Emote.Name;
         if (emote != "🔨" && emote != "✅") return;
 
-        var @event = new InteractionEvent
+        await PostInternalAsync("/internal/interactions/reaction", new
         {
-            EventId = Guid.NewGuid(),
-            Timestamp = DateTimeOffset.UtcNow,
-            GuildId = guildChannel.Guild.Id,
-            ChannelId = channel.Id,
-            UserId = reaction.UserId,
-            Username = reaction.User.IsSpecified ? reaction.User.Value.Username : "Unknown",
-            Type = ModInteractionType.Reaction,
-            MessageId = message.Id,
-            Emoji = emote
-        };
+            userId = reaction.UserId,
+            username = reaction.User.IsSpecified ? reaction.User.Value.Username : "Unknown",
+            messageId = message.Id,
+            emoji = emote
+        });
 
-        await PublishAsync(KafkaTopics.Interactions, reaction.UserId.ToString(), @event);
-        
-        _logger.LogInformation("Reaction {Emoji} added by user {UserId} on message {MessageId}", 
+        _logger.LogInformation("Reaction {Emoji} added by user {UserId} on message {MessageId}",
             emote, reaction.UserId, message.Id);
     }
 
+    /// <summary>Publishes to the one topic that's still Kafka: unbounded, bursty message volume.</summary>
     private async Task PublishAsync<T>(string topic, string key, T @event)
     {
         try
@@ -399,6 +411,48 @@ public class DiscordGatewayWorker : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to publish to {Topic}", topic);
+        }
+    }
+
+    /// <summary>
+    /// Posts a `/antispam` subcommand to Bot's matching endpoint and returns the reply text to show
+    /// the user. Slash commands are human-rate and already deferred, so a direct call is fine - only
+    /// the unbounded message stream needs Kafka. Returns null if Bot couldn't be reached.
+    /// </summary>
+    private async Task<string?> PostCommandAsync(string subCommand, JsonNode body)
+    {
+        try
+        {
+            using var http = _httpClientFactory.CreateClient("BotInternal");
+            var response = await http.PostAsJsonAsync($"/internal/commands/{subCommand}", body);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Bot command {SubCommand} returned {Status}", subCommand, response.StatusCode);
+                return null;
+            }
+
+            return await response.Content.ReadAsStringAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to call Bot command endpoint {SubCommand}", subCommand);
+            return null;
+        }
+    }
+
+    /// <summary>Fire-and-forget post of a moderation interaction (button/reaction) to Bot.</summary>
+    private async Task PostInternalAsync<T>(string path, T payload)
+    {
+        try
+        {
+            using var http = _httpClientFactory.CreateClient("BotInternal");
+            var response = await http.PostAsJsonAsync(path, payload);
+            if (!response.IsSuccessStatusCode)
+                _logger.LogWarning("Bot internal call to {Path} returned {Status}", path, response.StatusCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to call Bot internal endpoint {Path}", path);
         }
     }
 

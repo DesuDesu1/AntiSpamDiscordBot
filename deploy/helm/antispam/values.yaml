@@ -22,7 +22,15 @@ discord:
 encryption:
   key: ""       # base64-encoded 32-byte key; set via --set or secrets. Generate: openssl rand -base64 32
 
-# Kafka
+# Shared secret Gateway sends as X-Internal-Key when calling Bot's /internal/commands and
+# /internal/interactions (slash commands + moderation clicks - see architecture note below).
+internal:
+  apiKey: ""    # Set via --set or secrets. Generate: openssl rand -base64 32
+
+# Kafka carries only the message-ingestion stream (antispam.messages) - the one genuinely
+# unbounded, bursty flow. Slash commands and moderation clicks (ban/release via button or
+# reaction) go straight from Gateway to Bot over HTTP; they're moderator-rate and the interaction
+# is already ack'd by the time Gateway calls Bot, so a broker buys nothing there.
 kafka:
   enabled: true
   replicaCount: 1

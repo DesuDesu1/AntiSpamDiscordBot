@@ -11,12 +11,18 @@ post an alert for your moderators to review.
 
 ## How it works
 
-The bot is split into two services that talk over Kafka:
+The bot is split into two services:
 
-- **Gateway** holds the Discord WebSocket connection, turns gateway events into Kafka
-  messages, and sends interaction responses back to Discord.
-- **Bot** consumes those messages, runs spam detection, applies actions, and stores
-  per-server configuration and incident history in PostgreSQL (with a Redis cache).
+- **Gateway** holds the Discord WebSocket connection. Incoming messages are the one
+  genuinely unbounded, bursty stream, so those get turned into Kafka events and consumed
+  by Bot with backpressure and replay. Slash commands and moderation clicks (ban/release
+  via button or reaction) are moderator-rate and already acknowledged by the time Gateway
+  forwards them, so those go straight to Bot's internal HTTP API instead - a broker would
+  add latency and two extra consumer groups for a stream that never needs one.
+- **Bot** runs spam detection (a Vertical Slice per `/antispam` subcommand, with the
+  detection/link-policy scoring as pure, unit-testable domain types) and stores per-server
+  configuration and incident history in PostgreSQL, with a Redis cache and the burst-collapse
+  lock that lets it run more than one replica safely.
 
 All settings are per server (guild) and are changed at runtime through the `/antispam`
 slash command. You do not edit any files to configure a server.
@@ -25,9 +31,10 @@ slash command. You do not edit any files to configure a server.
 
 ```
 src/
-  AntiSpam.Contracts/   DTOs and Kafka event records shared by both services
-  AntiSpam.Gateway/     Discord WebSocket plus Kafka producer
-  AntiSpam.Bot/         Kafka consumers plus business logic, EF Core, Redis
+  AntiSpam.Contracts/   Shared DTOs; only Messages still flows over Kafka
+  AntiSpam.Gateway/     Discord WebSocket, Kafka producer for messages, HTTP client for the rest
+  AntiSpam.Bot/         Domain (GuildConfig/SpamIncident aggregates, detection logic),
+                        Mediator command slices per Features/*, EF Core, Redis
 
 deploy/
   helm/antispam/        Helm chart for Kubernetes
@@ -159,6 +166,8 @@ Set these under repository Settings, Secrets:
 - `VPS_SSH_KEY` private SSH key
 - `DISCORD_TOKEN` Discord bot token
 - `POSTGRES_PASSWORD` PostgreSQL password
+- `INTERNAL_API_KEY` shared secret between Gateway and Bot (`openssl rand -base64 32`) - Bot
+  refuses to start without it, so this must be set before the first deploy
 
 ### Manual deploy
 
@@ -166,6 +175,7 @@ Set these under repository Settings, Secrets:
 helm upgrade --install antispam ./deploy/helm/antispam \
   --set discord.token=YOUR_TOKEN \
   --set postgresql.password=YOUR_PASSWORD \
+  --set internal.apiKey=$(openssl rand -base64 32) \
   --set gateway.image.repository=ghcr.io/YOUR_USERNAME/antispam-gateway \
   --set bot.image.repository=ghcr.io/YOUR_USERNAME/antispam-bot \
   --namespace antispam \
