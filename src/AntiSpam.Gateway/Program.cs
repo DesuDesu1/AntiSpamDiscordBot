@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AntiSpam.Contracts;
+using AntiSpam.Gateway;
 using AntiSpam.Contracts.Events;
 using Confluent.Kafka;
 using Discord;
@@ -317,7 +318,10 @@ public class DiscordGatewayWorker : BackgroundService
         }
 
         var response = await PostCommandAsync(subCommand.Name, body);
-        await command.FollowupAsync(response ?? "❌ An error occurred processing your command.", ephemeral: true);
+        response = string.IsNullOrEmpty(response) ? "❌ An error occurred processing your command." : response;
+
+        // Long replies (list-links, help) exceed Discord's 2000-char limit, so send them chunked.
+        await command.FollowupChunkedAsync(response, ephemeral: true);
 
         _logger.LogInformation("Slash command /{Command} {SubCommand} from {User} in guild {Guild}",
             command.CommandName, subCommand.Name, command.User.Username, command.GuildId);
