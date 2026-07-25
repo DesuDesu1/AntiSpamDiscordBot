@@ -1,5 +1,11 @@
 # AntiSpam Discord Bot
 
+> **Status:** running in production since early 2026, moderating a live Discord community. Currently awaiting Discord approval for privileged gateway intents.
+>
+> **Stack:** .NET 8 · ASP.NET Core · Kafka · PostgreSQL · Redis · EF Core · Docker · Kubernetes (K3s) · Helm · GitHub Actions
+>
+> **Design notes:** two services, with a deliberate split in transport — the unbounded, bursty message stream goes through Kafka for backpressure and replay, while moderator-rate slash commands and button clicks go over a direct internal HTTP API rather than paying broker latency for a stream that never needs it. Spam detection is organised as a Vertical Slice per subcommand, with the detection and link-policy scoring written as pure, unit-testable domain types. Multiple replicas run safely behind a burst-collapse lock. Ships to a K3s cluster through Helm and GitHub Actions.
+
 A self-hosted Discord bot that detects and acts on spam. It watches for two common
 attacks and responds automatically:
 
