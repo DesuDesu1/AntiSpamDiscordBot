@@ -161,7 +161,7 @@ public sealed class DetectSpamHandler(
         var recentMessages = await messageRepository.GetInWindowAsync(message.GuildId, message.AuthorId, options.Window);
         var newMessage = new CachedMessage(
             message.Content, message.ChannelId, message.MessageId,
-            DateTimeOffset.UtcNow.ToUnixTimeSeconds(), message.AttachmentCount);
+            message.Timestamp.ToUnixTimeMilliseconds(), message.AttachmentCount);
         await messageRepository.AddAsync(message.GuildId, message.AuthorId, newMessage, options.Window);
 
         var verdict = new MessageWindow(recentMessages).Evaluate(newMessage, options);
