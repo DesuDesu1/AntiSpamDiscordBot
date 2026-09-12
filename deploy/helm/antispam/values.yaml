@@ -48,7 +48,8 @@ postgresql:
   storage: 5Gi
   database: antispam
   username: antispam
-  password: ""  # Set via --set or secrets
+  password: ""
+  connectionString: ""
 
 # Resources
 resources:

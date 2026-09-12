@@ -16,24 +16,24 @@ public class MessageConsumerWorker : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<MessageConsumerWorker> _logger;
 
-    public MessageConsumerWorker(ConsumerConfig config, IServiceScopeFactory scopeFactory, ILogger<MessageConsumerWorker> logger)
+    public MessageConsumerWorker(IConfiguration configuration, IServiceScopeFactory scopeFactory, ILogger<MessageConsumerWorker> logger)
     {
-        _config = config;
+        _config = new ConsumerConfig
+        {
+            BootstrapServers = configuration["Kafka:BootstrapServers"]
+                ?? throw new InvalidOperationException("Kafka:BootstrapServers is not configured"),
+            GroupId = "antispam-messages",
+            AutoOffsetReset = AutoOffsetReset.Latest,
+            EnableAutoCommit = false,
+            EnableAutoOffsetStore = false
+        };
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var config = new ConsumerConfig(_config)
-        {
-            GroupId = "antispam-messages",
-            AutoOffsetReset = AutoOffsetReset.Earliest,
-            EnableAutoCommit = false,
-            EnableAutoOffsetStore = false
-        };
-
-        using var consumer = new ConsumerBuilder<string, MessageReceivedEvent>(config)
+        using var consumer = new ConsumerBuilder<string, MessageReceivedEvent>(_config)
             .SetValueDeserializer(new SafeJsonDeserializer<MessageReceivedEvent>())
             .Build();
 

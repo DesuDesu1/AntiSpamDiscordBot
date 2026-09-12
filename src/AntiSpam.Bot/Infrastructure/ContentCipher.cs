@@ -50,8 +50,6 @@ public static class ContentCipher
 
     public static string Decrypt(string stored)
     {
-        // Rows written before encryption was enabled stay plaintext; they age out
-        // within the 7-day retention window, so just pass them through.
         if (string.IsNullOrEmpty(stored) || !stored.StartsWith(Prefix, StringComparison.Ordinal))
             return stored;
         var key = _key ?? throw new InvalidOperationException("ContentCipher not initialised.");

@@ -19,47 +19,26 @@ ContentCipher.Init(builder.Configuration["Encryption:Key"]
 if (string.IsNullOrEmpty(builder.Configuration["Internal:ApiKey"]))
     throw new InvalidOperationException("Internal:ApiKey is not configured");
 
-var pgConnectionString = builder.Configuration.GetConnectionString("Database");
-if (string.IsNullOrEmpty(pgConnectionString))
-{
-    var pgHost = builder.Configuration["Postgres:Host"] ?? "localhost";
-    var pgDatabase = builder.Configuration["Postgres:Database"] ?? "antispam";
-    var pgUsername = builder.Configuration["Postgres:Username"] ?? "antispam";
-    var pgPassword = builder.Configuration["Postgres:Password"] ?? "";
-    pgConnectionString = $"Host={pgHost};Database={pgDatabase};Username={pgUsername};Password={pgPassword}";
-}
+var pgConnectionString = builder.Configuration.GetConnectionString("Database")
+    ?? throw new InvalidOperationException("ConnectionStrings:Database is not configured");
 
-var redisConnectionString = builder.Configuration.GetConnectionString("Redis");
-if (string.IsNullOrEmpty(redisConnectionString))
-{
-    redisConnectionString = builder.Configuration["Redis:ConnectionString"] ?? "localhost:6379";
-}
-
+var redisConnectionString = builder.Configuration.GetConnectionString("Redis")
+    ?? throw new InvalidOperationException("ConnectionStrings:Redis is not configured");
 
 builder.Services.AddDbContextFactory<BotDbContext>(options =>
     options.UseNpgsql(pgConnectionString));
 builder.Services.AddScoped<BotDbContext>(sp =>
     sp.GetRequiredService<IDbContextFactory<BotDbContext>>().CreateDbContext());
 
-builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
-    ConnectionMultiplexer.Connect(redisConnectionString));
+var redis = await ConnectionMultiplexer.ConnectAsync(redisConnectionString);
+builder.Services.AddSingleton<IConnectionMultiplexer>(redis);
 
-builder.Services.AddSingleton<DiscordRestClient>(sp =>
-{
-    var client = new DiscordRestClient();
-    var token = builder.Configuration["Discord:Token"];
-    client.LoginAsync(TokenType.Bot, token).GetAwaiter().GetResult();
-    return client;
-});
+var discordToken = builder.Configuration["Discord:Token"]
+                   ?? throw new InvalidOperationException("Discord:Token is not configured");
 
-var kafkaServers = builder.Configuration["Kafka:BootstrapServers"] ?? "localhost:9092";
-builder.Services.AddSingleton(new Confluent.Kafka.ConsumerConfig
-{
-    BootstrapServers = kafkaServers,
-    GroupId = "antispam-bot-default",
-    AutoOffsetReset = Confluent.Kafka.AutoOffsetReset.Latest,
-    EnableAutoCommit = false
-});
+var discordClient = new DiscordRestClient();
+await discordClient.LoginAsync(TokenType.Bot, discordToken);
+builder.Services.AddSingleton(discordClient);
 
 builder.Services.AddSingleton<MessageRepository>();
 builder.Services.AddSingleton<GuildConfigCache>();
