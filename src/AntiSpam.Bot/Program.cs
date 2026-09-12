@@ -10,6 +10,7 @@ using Discord.Rest;
 using Mediator;
 using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;
+using ZiggyCreatures.Caching.Fusion;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -40,8 +41,18 @@ var discordClient = new DiscordRestClient();
 await discordClient.LoginAsync(TokenType.Bot, discordToken);
 builder.Services.AddSingleton(discordClient);
 
+builder.Services.AddStackExchangeRedisCache(o => o.Configuration = redisConnectionString);
+builder.Services.AddFusionCache()
+    .WithSystemTextJsonSerializer()
+    .WithRegisteredDistributedCache()
+    .WithBackplane(new ZiggyCreatures.Caching.Fusion.Backplane.StackExchangeRedis.RedisBackplane(
+        Microsoft.Extensions.Options.Options.Create(
+            new ZiggyCreatures.Caching.Fusion.Backplane.StackExchangeRedis.RedisBackplaneOptions
+            {
+                Configuration = redisConnectionString
+            })));
+
 builder.Services.AddSingleton<MessageRepository>();
-builder.Services.AddSingleton<GuildConfigCache>();
 
 builder.Services.AddHttpClient(nameof(DiscordService))
     .AddStandardResilienceHandler();

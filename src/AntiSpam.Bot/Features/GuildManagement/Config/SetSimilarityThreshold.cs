@@ -2,12 +2,13 @@ using AntiSpam.Bot.Common;
 using AntiSpam.Bot.Data;
 using AntiSpam.Bot.Infrastructure.Cache;
 using Mediator;
+using ZiggyCreatures.Caching.Fusion;
 
 namespace AntiSpam.Bot.Features.GuildManagement.Config;
 
 public sealed record SetSimilarityThresholdCommand(ulong GuildId, int Percent) : ICommand<string>;
 
-public sealed class SetSimilarityThresholdHandler(BotDbContext db, GuildConfigCache cache)
+public sealed class SetSimilarityThresholdHandler(BotDbContext db, IFusionCache cache)
     : ICommandHandler<SetSimilarityThresholdCommand, string>
 {
     public async ValueTask<string> Handle(SetSimilarityThresholdCommand command, CancellationToken ct)
@@ -16,7 +17,7 @@ public sealed class SetSimilarityThresholdHandler(BotDbContext db, GuildConfigCa
 
         config.SetSimilarityThreshold(command.Percent);
         await db.SaveChangesAsync(ct);
-        await cache.InvalidateAsync(command.GuildId);
+        await cache.RemoveAsync(CacheKeys.GuildConfig(command.GuildId));
         return $"✅ Similarity threshold: {command.Percent}%";
     }
 }

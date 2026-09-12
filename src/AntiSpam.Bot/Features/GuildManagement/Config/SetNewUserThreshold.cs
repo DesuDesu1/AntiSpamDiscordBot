@@ -2,12 +2,13 @@ using AntiSpam.Bot.Common;
 using AntiSpam.Bot.Data;
 using AntiSpam.Bot.Infrastructure.Cache;
 using Mediator;
+using ZiggyCreatures.Caching.Fusion;
 
 namespace AntiSpam.Bot.Features.GuildManagement.Config;
 
 public sealed record SetNewUserThresholdCommand(ulong GuildId, int Hours) : ICommand<string>;
 
-public sealed class SetNewUserThresholdHandler(BotDbContext db, GuildConfigCache cache)
+public sealed class SetNewUserThresholdHandler(BotDbContext db, IFusionCache cache)
     : ICommandHandler<SetNewUserThresholdCommand, string>
 {
     public async ValueTask<string> Handle(SetNewUserThresholdCommand command, CancellationToken ct)
@@ -16,7 +17,7 @@ public sealed class SetNewUserThresholdHandler(BotDbContext db, GuildConfigCache
 
         config.SetNewUserThreshold(command.Hours);
         await db.SaveChangesAsync(ct);
-        await cache.InvalidateAsync(command.GuildId);
+        await cache.RemoveAsync(CacheKeys.GuildConfig(command.GuildId));
         return $"✅ New user threshold set to {command.Hours}h";
     }
 }

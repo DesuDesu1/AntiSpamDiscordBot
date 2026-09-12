@@ -24,12 +24,6 @@ public record SpamVerdict(
     double MaxSimilarity = 0,
     int TotalAttachments = 0);
 
-/// <summary>
-/// A user's recent-message window (already fetched from the cache) evaluated against a newly
-/// arrived message. Pure: same inputs always score the same way, so it's unit-testable without
-/// Redis, Discord, or any other I/O — the caller owns fetching the window and appending the
-/// new message to the cache.
-/// </summary>
 public sealed class MessageWindow(IReadOnlyList<CachedMessage> recentMessages)
 {
     public SpamVerdict Evaluate(CachedMessage newMessage, SpamDetectionOptions options)
@@ -37,19 +31,16 @@ public sealed class MessageWindow(IReadOnlyList<CachedMessage> recentMessages)
         var (textMatches, maxSimilarity) = FindSimilarByText(newMessage.Content, recentMessages, options.SimilarityThreshold);
         var attachmentMatches = newMessage.HasAttachments
             ? recentMessages.Where(m => m.HasAttachments).ToList()
-            : new List<CachedMessage>();
-
-        var allTextMatches = textMatches.ToList();
-        var allAttachmentMatches = attachmentMatches.ToList();
+            : [];
 
         if (!string.IsNullOrWhiteSpace(newMessage.Content))
-            allTextMatches.Add(newMessage);
+            textMatches.Add(newMessage);
         if (newMessage.HasAttachments)
-            allAttachmentMatches.Add(newMessage);
+            attachmentMatches.Add(newMessage);
 
-        var textChannels = allTextMatches.Select(m => m.ChannelId).Distinct().ToList();
-        var attachmentChannels = allAttachmentMatches.Select(m => m.ChannelId).Distinct().ToList();
-        var totalAttachments = allAttachmentMatches.Sum(m => m.AttachmentCount);
+        var textChannels = textMatches.Select(m => m.ChannelId).Distinct().ToList();
+        var attachmentChannels = attachmentMatches.Select(m => m.ChannelId).Distinct().ToList();
+        var totalAttachments = attachmentMatches.Sum(m => m.AttachmentCount);
 
         var isTextSpam = textChannels.Count >= options.MinChannels;
         var isAttachmentSpam = attachmentChannels.Count >= options.MinChannels;
@@ -65,10 +56,10 @@ public sealed class MessageWindow(IReadOnlyList<CachedMessage> recentMessages)
 
         var matchingMessages = reason switch
         {
-            SpamReason.Both => allTextMatches.Union(allAttachmentMatches).ToList(),
-            SpamReason.SimilarText => allTextMatches,
-            SpamReason.AttachmentSpam => allAttachmentMatches,
-            _ => new List<CachedMessage>()
+            SpamReason.Both => textMatches.Union(attachmentMatches).ToList(),
+            SpamReason.SimilarText => textMatches,
+            SpamReason.AttachmentSpam => attachmentMatches,
+            _ => []
         };
 
         var channelIds = reason switch
@@ -76,7 +67,7 @@ public sealed class MessageWindow(IReadOnlyList<CachedMessage> recentMessages)
             SpamReason.Both => textChannels.Union(attachmentChannels).ToList(),
             SpamReason.SimilarText => textChannels,
             SpamReason.AttachmentSpam => attachmentChannels,
-            _ => new List<ulong>()
+            _ => []
         };
 
         return new SpamVerdict(isSpam, channelIds.Count, channelIds, matchingMessages, reason, maxSimilarity, totalAttachments);
@@ -86,7 +77,7 @@ public sealed class MessageWindow(IReadOnlyList<CachedMessage> recentMessages)
         string content, IReadOnlyList<CachedMessage> messages, double threshold)
     {
         if (string.IsNullOrWhiteSpace(content))
-            return (new List<CachedMessage>(), 0);
+            return ([], 0);
 
         var matches = new List<CachedMessage>();
         var maxSimilarity = 0.0;

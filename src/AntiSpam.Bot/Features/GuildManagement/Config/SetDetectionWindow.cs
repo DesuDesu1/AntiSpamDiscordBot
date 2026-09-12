@@ -2,12 +2,13 @@ using AntiSpam.Bot.Common;
 using AntiSpam.Bot.Data;
 using AntiSpam.Bot.Infrastructure.Cache;
 using Mediator;
+using ZiggyCreatures.Caching.Fusion;
 
 namespace AntiSpam.Bot.Features.GuildManagement.Config;
 
 public sealed record SetDetectionWindowCommand(ulong GuildId, int Seconds) : ICommand<string>;
 
-public sealed class SetDetectionWindowHandler(BotDbContext db, GuildConfigCache cache)
+public sealed class SetDetectionWindowHandler(BotDbContext db, IFusionCache cache)
     : ICommandHandler<SetDetectionWindowCommand, string>
 {
     public async ValueTask<string> Handle(SetDetectionWindowCommand command, CancellationToken ct)
@@ -16,7 +17,7 @@ public sealed class SetDetectionWindowHandler(BotDbContext db, GuildConfigCache 
 
         config.SetDetectionWindow(command.Seconds);
         await db.SaveChangesAsync(ct);
-        await cache.InvalidateAsync(command.GuildId);
+        await cache.RemoveAsync(CacheKeys.GuildConfig(command.GuildId));
         return $"✅ Detection window: {command.Seconds}s";
     }
 }

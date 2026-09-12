@@ -4,6 +4,8 @@ using AntiSpam.Bot.Domain.GuildManagement;
 using Discord;
 using Discord.Rest;
 using Microsoft.EntityFrameworkCore;
+using AntiSpam.Bot.Infrastructure.Cache;
+using ZiggyCreatures.Caching.Fusion;
 using SpamIncidentEntity = AntiSpam.Bot.Domain.SpamIncident.SpamIncident;
 
 namespace AntiSpam.Bot.Infrastructure.Discord;
@@ -14,36 +16,40 @@ public class DiscordService
     private readonly IDbContextFactory<BotDbContext> _dbFactory;
     private readonly ILogger<DiscordService> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IFusionCache _cache;
+
+    private static readonly FusionCacheEntryOptions ChannelCacheOptions =
+        new(TimeSpan.FromMinutes(5)) { SkipDistributedCache = true, SkipBackplaneNotifications = true };
 
     public DiscordService(
         DiscordRestClient client,
         IDbContextFactory<BotDbContext> dbFactory,
         ILogger<DiscordService> logger,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        IFusionCache cache)
     {
         _client = client;
         _dbFactory = dbFactory;
         _logger = logger;
         _httpClientFactory = httpClientFactory;
+        _cache = cache;
     }
+
+    private async Task<ITextChannel?> GetTextChannelAsync(ulong channelId) =>
+        await _cache.GetOrSetAsync<ITextChannel?>(
+            CacheKeys.Channel(channelId),
+            async _ => await _client.GetChannelAsync(channelId) as ITextChannel,
+            ChannelCacheOptions);
 
     private HttpClient Http => _httpClientFactory.CreateClient(nameof(DiscordService));
 
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".webp"];
-    private const long MaxRehostBytes = 8 * 1024 * 1024;        // per-image cap (Discord basic upload limit)
-    private const long MaxRehostTotalBytes = 20 * 1024 * 1024;  // budget across all images in one alert
-    private const int MaxRehostImages = 4;                       // Discord shows at most 4 images in a merged gallery
-
-    // Embeds that share the same url get merged by Discord into a single image gallery,
-    // which is how one alert can show several pictures.
+    private const long MaxRehostBytes = 8 * 1024 * 1024;
+    private const long MaxRehostTotalBytes = 20 * 1024 * 1024;
+    private const int MaxRehostImages = 4;
+    
     private const string GalleryUrl = "https://discord.com";
-
-    /// <summary>
-    /// Downloads up to <see cref="MaxRehostImages"/> image attachments so they can be re-uploaded
-    /// with the alert. Re-hosting (instead of linking the original CDN url) keeps the pictures visible
-    /// after the spam message is deleted and after the embed is edited on action. Non-image attachments
-    /// (videos, files) are ignored, and the per-image and total size budgets are enforced.
-    /// </summary>
+    
     private async Task<List<(string FileName, byte[] Bytes)>> DownloadImagesAsync(IReadOnlyList<string> attachmentUrls)
     {
         var images = new List<(string FileName, byte[] Bytes)>();
@@ -68,7 +74,6 @@ public class DiscordService
                     break;
 
                 total += bytes.LongLength;
-                // Prefix with the index so two attachments with the same name stay distinct references.
                 var fileName = $"{images.Count}_{SanitizeFileName(Path.GetFileName(UrlPath(url)))}";
                 images.Add((fileName, bytes));
             }
@@ -80,10 +85,7 @@ public class DiscordService
 
         return images;
     }
-
-    /// <summary>
-    /// Sends the alert, re-uploading any images and merging them into a gallery via the shared url trick.
-    /// </summary>
+    
     private static async Task<IUserMessage> SendAlertWithImagesAsync(
         ITextChannel channel,
         EmbedBuilder mainEmbed,
@@ -116,23 +118,12 @@ public class DiscordService
         var cleaned = new string(name.Select(c => char.IsLetterOrDigit(c) || c is '.' or '_' or '-' ? c : '_').ToArray());
         return string.IsNullOrWhiteSpace(cleaned) ? "attachment.png" : cleaned;
     }
-
-    /// <summary>
-    /// Times the user out. Returns false on failure - most often because the target outranks
-    /// the bot (owner or a higher role), which Discord rejects.
-    /// </summary>
+    
     public async Task<bool> MuteUserAsync(ulong guildId, ulong userId, TimeSpan duration)
     {
         try
         {
-            var guild = await _client.GetGuildAsync(guildId);
-            if (guild == null)
-            {
-                _logger.LogWarning("Guild {GuildId} not found", guildId);
-                return false;
-            }
-
-            var user = await guild.GetUserAsync(userId);
+            var user = await _client.GetGuildUserAsync(guildId, userId);
             if (user == null)
             {
                 _logger.LogWarning("User {UserId} not found in guild {GuildId}", userId, guildId);
@@ -154,10 +145,9 @@ public class DiscordService
     {
         try
         {
-            var guild = await _client.GetGuildAsync(guildId);
-            var user = await guild.GetUserAsync(userId);
+            var user = await _client.GetGuildUserAsync(guildId, userId);
 
-            if (user != null && user.TimedOutUntil.HasValue && user.TimedOutUntil.Value > DateTimeOffset.UtcNow)
+            if (user is { TimedOutUntil: not null } && user.TimedOutUntil.Value > DateTimeOffset.UtcNow)
             {
                 await user.ModifyAsync(x => x.TimedOutUntil = DateTimeOffset.UtcNow);
                 _logger.LogInformation("Unmuted user {UserId}", userId);
@@ -169,10 +159,6 @@ public class DiscordService
         }
     }
 
-    /// <summary>
-    /// Bans the user. Returns false on failure - most often because the target outranks
-    /// the bot (owner or a higher role), which Discord rejects.
-    /// </summary>
     public async Task<bool> BanUserAsync(ulong guildId, ulong userId, string reason)
     {
         try
@@ -191,9 +177,6 @@ public class DiscordService
 
     public async Task BulkDeleteMessagesAsync(ulong guildId, List<(ulong ChannelId, ulong MessageId)> messages)
     {
-        var guild = await _client.GetGuildAsync(guildId);
-        if (guild == null) return;
-
         var deletedCount = 0;
         var byChannel = messages.GroupBy(m => m.ChannelId);
 
@@ -201,8 +184,7 @@ public class DiscordService
         {
             try
             {
-                var channels = await guild.GetChannelsAsync();
-                var channel = channels.FirstOrDefault(c => c.Id == group.Key) as ITextChannel;
+                var channel = await GetTextChannelAsync(group.Key);
                 if (channel == null) continue;
 
                 var messageIds = group.Select(m => m.MessageId).ToArray();
@@ -228,15 +210,11 @@ public class DiscordService
             _logger.LogInformation("Deleted {Count} spam messages", deletedCount);
     }
 
-    /// <summary>
-    /// Best-effort avatar url for the offender, so the alert can show their face like other bots do.
-    /// Falls back to the global avatar, then the default avatar; returns null only if everything fails.
-    /// </summary>
-    private async Task<string?> TryGetAvatarUrlAsync(IGuild guild, ulong userId)
+    private async Task<string?> TryGetAvatarUrlAsync(ulong guildId, ulong userId)
     {
         try
         {
-            var member = await guild.GetUserAsync(userId);
+            var member = await _client.GetGuildUserAsync(guildId, userId);
             if (member != null)
                 return member.GetGuildAvatarUrl() ?? member.GetAvatarUrl() ?? member.GetDefaultAvatarUrl();
 
@@ -249,10 +227,7 @@ public class DiscordService
             return null;
         }
     }
-
-    /// <summary>
-    /// Builds the mute status line for an alert: applied, failed (likely outranks the bot), or disabled.
-    /// </summary>
+    
     private static string MuteStatusLine(bool? muteApplied, GuildConfig config) => muteApplied switch
     {
         true => $"Muted for {config.MuteDurationMinutes} minutes",
@@ -264,15 +239,7 @@ public class DiscordService
     {
         try
         {
-            var guild = await _client.GetGuildAsync(guildId);
-            if (guild == null)
-            {
-                _logger.LogWarning("Guild {GuildId} not found", guildId);
-                return;
-            }
-
-            var channels = await guild.GetChannelsAsync();
-            var channel = channels.FirstOrDefault(c => c.Id == channelId) as ITextChannel;
+            var channel = await GetTextChannelAsync(channelId);
             if (channel == null)
             {
                 _logger.LogWarning("Alert channel {ChannelId} not found", channelId);
@@ -284,7 +251,7 @@ public class DiscordService
                 : (incident.Content.Length > 200 ? incident.Content[..200] + "..." : incident.Content);
 
             var images = await DownloadImagesAsync(attachmentUrls);
-            var avatarUrl = await TryGetAvatarUrlAsync(guild, incident.UserId);
+            var avatarUrl = await TryGetAvatarUrlAsync(guildId, incident.UserId);
 
             var embedBuilder = new EmbedBuilder()
                 .WithAuthor($"{incident.Username} ({incident.UserId})", avatarUrl)
@@ -323,11 +290,7 @@ public class DiscordService
 
         try
         {
-            var guild = await _client.GetGuildAsync(guildId);
-            if (guild == null) return;
-
-            var channels = await guild.GetChannelsAsync();
-            var channel = channels.FirstOrDefault(c => c.Id == incident.AlertChannelId.Value) as ITextChannel;
+            var channel = await GetTextChannelAsync(incident.AlertChannelId.Value);
             if (channel == null) return;
 
             var message = await channel.GetMessageAsync(incident.AlertMessageId.Value) as IUserMessage;
@@ -352,16 +315,11 @@ public class DiscordService
                 .AddField("Content", contentDisplay)
                 .WithFooter($"Incident #{incident.Id}")
                 .WithTimestamp(DateTimeOffset.UtcNow);
-
-            // Carry over the user + avatar header from the original alert (the user may already
-            // be banned and no longer fetchable, so reuse the embed we posted rather than refetch).
+            
             var existingAuthor = message.Embeds.FirstOrDefault()?.Author;
             if (existingAuthor != null)
                 embedBuilder.WithAuthor(existingAuthor.Value.Name, existingAuthor.Value.IconUrl);
-
-            // Keep the re-hosted images in the embed gallery: the alert message still carries the
-            // attachments, so editing preserves them as long as we don't touch m.Attachments.
-            // Image attachments report a Width; rebuild the same shared-url gallery over them.
+            
             var existingImages = message.Attachments.Where(a => a.Width.HasValue).ToList();
             var embeds = new List<Embed>();
             if (existingImages.Count > 0)
@@ -392,15 +350,7 @@ public class DiscordService
     {
         try
         {
-            var guild = await _client.GetGuildAsync(guildId);
-            if (guild == null)
-            {
-                _logger.LogWarning("Guild {GuildId} not found", guildId);
-                return;
-            }
-
-            var channels = await guild.GetChannelsAsync();
-            var channel = channels.FirstOrDefault(c => c.Id == channelId) as ITextChannel;
+            var channel = await GetTextChannelAsync(channelId);
             if (channel == null)
             {
                 _logger.LogWarning("Alert channel {ChannelId} not found", channelId);
@@ -416,7 +366,7 @@ public class DiscordService
                 : "unknown";
 
             var images = await DownloadImagesAsync(attachmentUrls);
-            var avatarUrl = await TryGetAvatarUrlAsync(guild, incident.UserId);
+            var avatarUrl = await TryGetAvatarUrlAsync(guildId, incident.UserId);
 
             var embedBuilder = new EmbedBuilder()
                 .WithAuthor($"{incident.Username} ({incident.UserId})", avatarUrl)
@@ -448,11 +398,7 @@ public class DiscordService
             _logger.LogError(ex, "Failed to send new user link alert for incident #{Id}", incident.Id);
         }
     }
-
-    /// <summary>
-    /// The incident was already saved (with its Id) before the alert was sent; this records where
-    /// the alert embed landed so reaction-based resolution can look it up later.
-    /// </summary>
+    
     private async Task SaveAlertReferenceAsync(long incidentId, ulong channelId, ulong alertMessageId)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
@@ -463,20 +409,12 @@ public class DiscordService
         dbIncident.AttachAlert(channelId, alertMessageId);
         await db.SaveChangesAsync();
     }
-
-    /// <summary>
-    /// Fetches user's JoinedAt from Discord API (fallback when Gateway cache misses).
-    /// Only called when a user posts a link and JoinedAt wasn't in the message event.
-    /// </summary>
+    
     public async Task<DateTimeOffset?> GetUserJoinedAtAsync(ulong guildId, ulong userId)
     {
         try
         {
-            var guild = await _client.GetGuildAsync(guildId);
-            if (guild == null)
-                return null;
-
-            var user = await guild.GetUserAsync(userId);
+            var user = await _client.GetGuildUserAsync(guildId, userId);
 
             if (user?.JoinedAt != null)
             {
@@ -500,11 +438,7 @@ public class DiscordService
             return $"{(int)duration.TotalHours}h {duration.Minutes}m";
         return $"{(int)duration.TotalDays}d {duration.Hours}h";
     }
-
-    /// <summary>
-    /// Resolves a discord.gg invite code to the guild it points to (id + name for display).
-    /// Returns null if the invite is invalid, expired, or couldn't be resolved.
-    /// </summary>
+    
     public async Task<(ulong GuildId, string GuildName)?> ResolveInviteAsync(string inviteCode)
     {
         try

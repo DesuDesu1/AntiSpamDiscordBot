@@ -6,60 +6,74 @@ using AntiSpam.Bot.Infrastructure.Cache;
 using AntiSpam.Bot.Infrastructure.Discord;
 using AntiSpam.Contracts.Events;
 using Mediator;
+using ZiggyCreatures.Caching.Fusion;
 using Microsoft.EntityFrameworkCore;
 
 namespace AntiSpam.Bot.Features.SpamDetection;
 
 public sealed record DetectSpamCommand(MessageReceivedEvent Message) : ICommand;
 
-/// <summary>
-/// Runs both spam checks (cross-channel repost, new-user link) for one incoming message and
-/// carries out the resulting moderation action. Scoring is delegated to the pure
-/// <see cref="MessageWindow"/>/<see cref="LinkPolicy"/> domain types; this handler is orchestration
-/// only (Redis window, Discord actions, incident persistence). Guild config is read through the
-/// Redis cache - this is the hottest read path in the bot (every message hits it).
-/// </summary>
-public sealed class DetectSpamHandler(
-    BotDbContext db,
-    GuildConfigCache configCache,
-    MessageRepository messageRepository,
-    DiscordService discord,
-    ILogger<DetectSpamHandler> logger) : ICommandHandler<DetectSpamCommand>
+public sealed class DetectSpamHandler : ICommandHandler<DetectSpamCommand>
 {
+    private static readonly TimeSpan ConfigCacheTtl = TimeSpan.FromHours(1);
+
+    private readonly BotDbContext _db;
+    private readonly IFusionCache _cache;
+    private readonly MessageRepository _messageRepository;
+    private readonly DiscordService _discord;
+    private readonly ILogger<DetectSpamHandler> _logger;
+
+    public DetectSpamHandler(BotDbContext db,
+        IFusionCache cache,
+        MessageRepository messageRepository,
+        DiscordService discord,
+        ILogger<DetectSpamHandler> logger)
+    {
+        _db = db;
+        _cache = cache;
+        _messageRepository = messageRepository;
+        _discord = discord;
+        _logger = logger;
+    }
+
     public async ValueTask<Unit> Handle(DetectSpamCommand command, CancellationToken ct)
     {
         var message = command.Message;
         var config = await LoadConfigAsync(message.GuildId, ct);
-        if (!config.IsEnabled)
+        if (!config.IsEnabled
+            || config.DetectNewUserLinks
+            && await TryHandleSuspiciousNewUserLinkAsync(message, config)
+            || (string.IsNullOrWhiteSpace(message.Content)
+                && message.AttachmentCount == 0))
+        {
             return Unit.Value;
-
-        if (config.DetectNewUserLinks && await TryHandleSuspiciousNewUserLinkAsync(message, config))
-            return Unit.Value;
-
-        if (string.IsNullOrWhiteSpace(message.Content) && message.AttachmentCount == 0)
-            return Unit.Value;
+        }
 
         await CheckSpamWindowAsync(message, config);
         return Unit.Value;
     }
 
-    /// <summary>Read-through cache: Redis first, then Postgres, seeding a default config for a first-seen guild.</summary>
     private async Task<GuildConfig> LoadConfigAsync(ulong guildId, CancellationToken ct)
     {
-        var cached = await configCache.TryGetAsync(guildId);
-        if (cached != null)
-            return cached;
+        var snapshot = await _cache.GetOrSetAsync(
+            CacheKeys.GuildConfig(guildId),
+            async token =>
+            {
+                var config = await _db.GuildConfigs.AsNoTracking()
+                    .FirstOrDefaultAsync(c => c.GuildId == guildId, token);
+                if (config == null)
+                {
+                    config = GuildConfig.CreateDefault(guildId);
+                    _db.GuildConfigs.Add(config);
+                    await _db.SaveChangesAsync(token);
+                }
 
-        var config = await db.GuildConfigs.AsNoTracking().FirstOrDefaultAsync(c => c.GuildId == guildId, ct);
-        if (config == null)
-        {
-            config = GuildConfig.CreateDefault(guildId);
-            db.GuildConfigs.Add(config);
-            await db.SaveChangesAsync(ct);
-        }
+                return config.ToSnapshot();
+            },
+            ConfigCacheTtl,
+            ct);
 
-        await configCache.SetAsync(config);
-        return config;
+        return GuildConfig.FromSnapshot(snapshot);
     }
 
     private async Task<bool> TryHandleSuspiciousNewUserLinkAsync(MessageReceivedEvent message, GuildConfig config)
@@ -69,7 +83,7 @@ public sealed class DetectSpamHandler(
             return false;
 
         var threshold = TimeSpan.FromHours(config.NewUserHoursThreshold);
-        var joinedAt = message.AuthorJoinedAt ?? await discord.GetUserJoinedAtAsync(message.GuildId, message.AuthorId);
+        var joinedAt = message.AuthorJoinedAt ?? await _discord.GetUserJoinedAtAsync(message.GuildId, message.AuthorId);
         var (isNew, memberFor) = IsNewUser(joinedAt, threshold);
         if (!isNew)
             return false;
@@ -82,7 +96,7 @@ public sealed class DetectSpamHandler(
             return false;
         }
 
-        logger.LogWarning(
+        _logger.LogWarning(
             "SUSPICIOUS: New user {User} ({Id}) posted link, member for {MemberFor} (threshold: {Threshold}h) in guild {Guild}",
             message.AuthorUsername, message.AuthorId, memberFor, config.NewUserHoursThreshold, message.GuildId);
 
@@ -98,7 +112,7 @@ public sealed class DetectSpamHandler(
 
         foreach (var code in codes)
         {
-            var resolved = await discord.ResolveInviteAsync(code);
+            var resolved = await _discord.ResolveInviteAsync(code);
             if (resolved is not { } invite || !config.IsInviteGuildAllowed(invite.GuildId))
                 return false;
         }
@@ -118,12 +132,10 @@ public sealed class DetectSpamHandler(
     private async Task RaiseSuspiciousNewUserIncidentAsync(MessageReceivedEvent message, GuildConfig config, TimeSpan? memberFor)
     {
         var cooldown = TimeSpan.FromSeconds(config.DetectionWindowSeconds);
-        if (!await messageRepository.TryClaimActionAsync(message.GuildId, message.AuthorId, cooldown))
+        if (!await _messageRepository.TryClaimActionAsync(message.GuildId, message.AuthorId, cooldown))
         {
-            // Straggler: the new user dropped links across several channels; we alert once, but every
-            // one of those messages still needs deleting.
             if (config.DeleteMessages)
-                await discord.BulkDeleteMessagesAsync(message.GuildId, [(message.ChannelId, message.MessageId)]);
+                await _discord.BulkDeleteMessagesAsync(message.GuildId, [(message.ChannelId, message.MessageId)]);
             return;
         }
 
@@ -134,18 +146,18 @@ public sealed class DetectSpamHandler(
         await PersistIncidentAsync(incident);
 
         var muteApplied = config.MuteOnSpam
-            ? (bool?)await discord.MuteUserAsync(message.GuildId, message.AuthorId, TimeSpan.FromMinutes(config.MuteDurationMinutes))
+            ? (bool?)await _discord.MuteUserAsync(message.GuildId, message.AuthorId, TimeSpan.FromMinutes(config.MuteDurationMinutes))
             : null;
 
         if (config.AlertChannelId.HasValue)
         {
-            await discord.SendNewUserLinkAlertAsync(
+            await _discord.SendNewUserLinkAlertAsync(
                 message.GuildId, config.AlertChannelId.Value, incident, memberFor, config, message.AttachmentUrls, muteApplied);
         }
 
         if (config.DeleteMessages)
         {
-            await discord.BulkDeleteMessagesAsync(message.GuildId, [(message.ChannelId, message.MessageId)]);
+            await _discord.BulkDeleteMessagesAsync(message.GuildId, [(message.ChannelId, message.MessageId)]);
         }
     }
 
@@ -158,17 +170,17 @@ public sealed class DetectSpamHandler(
             Window = TimeSpan.FromSeconds(config.DetectionWindowSeconds)
         };
 
-        var recentMessages = await messageRepository.GetInWindowAsync(message.GuildId, message.AuthorId, options.Window);
+        var recentMessages = await _messageRepository.GetInWindowAsync(message.GuildId, message.AuthorId, options.Window);
         var newMessage = new CachedMessage(
             message.Content, message.ChannelId, message.MessageId,
-            message.Timestamp.ToUnixTimeMilliseconds(), message.AttachmentCount);
-        await messageRepository.AddAsync(message.GuildId, message.AuthorId, newMessage, options.Window);
+            message.Timestamp.ToUnixTimeSeconds(), message.AttachmentCount);
+        await _messageRepository.AddAsync(message.GuildId, message.AuthorId, newMessage, options.Window);
 
         var verdict = new MessageWindow(recentMessages).Evaluate(newMessage, options);
         if (!verdict.IsSpam)
             return;
 
-        logger.LogWarning(
+        _logger.LogWarning(
             "SPAM DETECTED: User {User} ({Id}) - {Channels} channels, reason: {Reason}, similarity: {Similarity:P0}",
             message.AuthorUsername, message.AuthorId, verdict.ChannelCount, verdict.Reason, verdict.MaxSimilarity);
 
@@ -178,13 +190,10 @@ public sealed class DetectSpamHandler(
     private async Task RaiseSpamIncidentAsync(MessageReceivedEvent message, GuildConfig config, SpamVerdict verdict)
     {
         var cooldown = TimeSpan.FromSeconds(config.DetectionWindowSeconds);
-        if (!await messageRepository.TryClaimActionAsync(message.GuildId, message.AuthorId, cooldown))
+        if (!await _messageRepository.TryClaimActionAsync(message.GuildId, message.AuthorId, cooldown))
         {
-            // A straggler in a burst we've already alerted/muted on: the one-time action is done,
-            // but this message still scored as spam and must be removed so it doesn't slip through
-            // (the claim only collapses the alert/mute, it must not suppress deletion).
             if (config.DeleteMessages)
-                await discord.BulkDeleteMessagesAsync(message.GuildId, [(message.ChannelId, message.MessageId)]);
+                await _discord.BulkDeleteMessagesAsync(message.GuildId, [(message.ChannelId, message.MessageId)]);
             return;
         }
 
@@ -193,26 +202,26 @@ public sealed class DetectSpamHandler(
         await PersistIncidentAsync(incident);
 
         var muteApplied = config.MuteOnSpam
-            ? (bool?)await discord.MuteUserAsync(message.GuildId, message.AuthorId, TimeSpan.FromMinutes(config.MuteDurationMinutes))
+            ? (bool?)await _discord.MuteUserAsync(message.GuildId, message.AuthorId, TimeSpan.FromMinutes(config.MuteDurationMinutes))
             : null;
 
         if (config.AlertChannelId.HasValue)
         {
-            await discord.SendAlertAsync(message.GuildId, config.AlertChannelId.Value, incident, config, message.AttachmentUrls, muteApplied);
+            await _discord.SendAlertAsync(message.GuildId, config.AlertChannelId.Value, incident, config, message.AttachmentUrls, muteApplied);
         }
 
         if (config.DeleteMessages)
         {
             var messagesToDelete = verdict.MatchingMessages.Select(m => (m.ChannelId, m.MessageId)).ToList();
-            await discord.BulkDeleteMessagesAsync(message.GuildId, messagesToDelete);
+            await _discord.BulkDeleteMessagesAsync(message.GuildId, messagesToDelete);
         }
     }
 
     private async Task PersistIncidentAsync(SpamIncident incident)
     {
-        db.SpamIncidents.Add(incident);
-        await db.SaveChangesAsync();
-        logger.LogInformation("Created spam incident #{Id} for user {User} in guild {Guild}",
+        _db.SpamIncidents.Add(incident);
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("Created spam incident #{Id} for user {User} in guild {Guild}",
             incident.Id, incident.Username, incident.GuildId);
     }
 
@@ -220,8 +229,8 @@ public sealed class DetectSpamHandler(
     {
         if (duration.TotalMinutes < 60)
             return $"{(int)duration.TotalMinutes}m";
-        if (duration.TotalHours < 24)
-            return $"{(int)duration.TotalHours}h {duration.Minutes}m";
-        return $"{(int)duration.TotalDays}d {duration.Hours}h";
+        return duration.TotalHours < 24 
+            ? $"{(int)duration.TotalHours}h {duration.Minutes}m" 
+            : $"{(int)duration.TotalDays}d {duration.Hours}h";
     }
 }

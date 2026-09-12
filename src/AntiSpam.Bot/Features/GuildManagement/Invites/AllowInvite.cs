@@ -5,19 +5,17 @@ using AntiSpam.Bot.Domain.SpamDetection;
 using AntiSpam.Bot.Infrastructure.Cache;
 using AntiSpam.Bot.Infrastructure.Discord;
 using Mediator;
+using ZiggyCreatures.Caching.Fusion;
 
 namespace AntiSpam.Bot.Features.GuildManagement.Invites;
 
-/// <param name="Invite">An invite link/code to the external server whose invites should be allowed.</param>
 public sealed record AllowInviteCommand(ulong GuildId, string Invite) : ICommand<string>;
 
-public sealed class AllowInviteHandler(BotDbContext db, GuildConfigCache cache, DiscordService discord)
+public sealed class AllowInviteHandler(BotDbContext db, IFusionCache cache, DiscordService discord)
     : ICommandHandler<AllowInviteCommand, string>
 {
     public async ValueTask<string> Handle(AllowInviteCommand command, CancellationToken ct)
     {
-        // Resolve the invite to its target guild first: an invite code is transient, the guild id we
-        // store is stable, and resolving also gives us the name to show in the list.
         var code = LinkPolicy.ParseInviteCode(command.Invite);
         var resolved = await discord.ResolveInviteAsync(code)
             ?? throw new InvalidConfigValueException("Couldn't resolve that invite - is the link valid and not expired?");
@@ -25,7 +23,7 @@ public sealed class AllowInviteHandler(BotDbContext db, GuildConfigCache cache, 
         var config = await db.GuildConfigs.GetOrCreateAsync(command.GuildId, ct);
         var name = config.AllowInviteServer(resolved.GuildId, resolved.GuildName);
         await db.SaveChangesAsync(ct);
-        await cache.InvalidateAsync(command.GuildId);
+        await cache.RemoveAsync(CacheKeys.GuildConfig(command.GuildId));
         return $"✅ New members may now post invites to **{name}**";
     }
 }

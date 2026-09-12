@@ -2,12 +2,13 @@ using AntiSpam.Bot.Common;
 using AntiSpam.Bot.Data;
 using AntiSpam.Bot.Infrastructure.Cache;
 using Mediator;
+using ZiggyCreatures.Caching.Fusion;
 
 namespace AntiSpam.Bot.Features.GuildManagement.Config;
 
 public sealed record SetEnabledCommand(ulong GuildId, bool Enabled) : ICommand<string>;
 
-public sealed class SetEnabledHandler(BotDbContext db, GuildConfigCache cache)
+public sealed class SetEnabledHandler(BotDbContext db, IFusionCache cache)
     : ICommandHandler<SetEnabledCommand, string>
 {
     public async ValueTask<string> Handle(SetEnabledCommand command, CancellationToken ct)
@@ -18,7 +19,7 @@ public sealed class SetEnabledHandler(BotDbContext db, GuildConfigCache cache)
         else config.Disable();
 
         await db.SaveChangesAsync(ct);
-        await cache.InvalidateAsync(command.GuildId);
+        await cache.RemoveAsync(CacheKeys.GuildConfig(command.GuildId));
         return command.Enabled ? "✅ Protection enabled" : "❌ Protection disabled";
     }
 }
