@@ -171,7 +171,10 @@ Set these under repository Settings, Secrets:
 - `VPS_USER` SSH user
 - `VPS_SSH_KEY` private SSH key
 - `DISCORD_TOKEN` Discord bot token
-- `POSTGRES_PASSWORD` PostgreSQL password
+- `POSTGRES_PASSWORD` PostgreSQL password for the bundled database server
+- `DATABASE_CONNECTION_STRING` full Npgsql connection string the Bot uses, e.g.
+  `Host=antispam-postgresql;Database=antispam;Username=antispam;Password=...`. The password in
+  it must match `POSTGRES_PASSWORD`
 - `INTERNAL_API_KEY` shared secret between Gateway and Bot (`openssl rand -base64 32`) - Bot
   refuses to start without it, so this must be set before the first deploy
 
@@ -181,6 +184,7 @@ Set these under repository Settings, Secrets:
 helm upgrade --install antispam ./deploy/helm/antispam \
   --set discord.token=YOUR_TOKEN \
   --set postgresql.password=YOUR_PASSWORD \
+  --set-literal postgresql.connectionString="Host=antispam-postgresql;Database=antispam;Username=antispam;Password=YOUR_PASSWORD" \
   --set internal.apiKey=$(openssl rand -base64 32) \
   --set gateway.image.repository=ghcr.io/YOUR_USERNAME/antispam-gateway \
   --set bot.image.repository=ghcr.io/YOUR_USERNAME/antispam-bot \

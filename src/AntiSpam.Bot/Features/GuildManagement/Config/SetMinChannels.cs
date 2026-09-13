@@ -2,12 +2,13 @@ using AntiSpam.Bot.Common;
 using AntiSpam.Bot.Data;
 using AntiSpam.Bot.Infrastructure.Cache;
 using Mediator;
+using ZiggyCreatures.Caching.Fusion;
 
 namespace AntiSpam.Bot.Features.GuildManagement.Config;
 
 public sealed record SetMinChannelsCommand(ulong GuildId, int Count) : ICommand<string>;
 
-public sealed class SetMinChannelsHandler(BotDbContext db, GuildConfigCache cache)
+public sealed class SetMinChannelsHandler(BotDbContext db, IFusionCache cache)
     : ICommandHandler<SetMinChannelsCommand, string>
 {
     public async ValueTask<string> Handle(SetMinChannelsCommand command, CancellationToken ct)
@@ -16,7 +17,7 @@ public sealed class SetMinChannelsHandler(BotDbContext db, GuildConfigCache cach
 
         config.SetMinChannels(command.Count);
         await db.SaveChangesAsync(ct);
-        await cache.InvalidateAsync(command.GuildId);
+        await cache.RemoveAsync(CacheKeys.GuildConfig(command.GuildId));
         return $"✅ Minimum channels: {command.Count}";
     }
 }

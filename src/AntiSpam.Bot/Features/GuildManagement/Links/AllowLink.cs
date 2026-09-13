@@ -2,12 +2,13 @@ using AntiSpam.Bot.Common;
 using AntiSpam.Bot.Data;
 using AntiSpam.Bot.Infrastructure.Cache;
 using Mediator;
+using ZiggyCreatures.Caching.Fusion;
 
 namespace AntiSpam.Bot.Features.GuildManagement.Links;
 
 public sealed record AllowLinkCommand(ulong GuildId, string Link) : ICommand<string>;
 
-public sealed class AllowLinkHandler(BotDbContext db, GuildConfigCache cache)
+public sealed class AllowLinkHandler(BotDbContext db, IFusionCache cache)
     : ICommandHandler<AllowLinkCommand, string>
 {
     public async ValueTask<string> Handle(AllowLinkCommand command, CancellationToken ct)
@@ -17,7 +18,7 @@ public sealed class AllowLinkHandler(BotDbContext db, GuildConfigCache cache)
         // Throws (dup / cap / invalid) before we save, so nothing is persisted on rejection.
         var normalized = config.AllowLink(command.Link);
         await db.SaveChangesAsync(ct);
-        await cache.InvalidateAsync(command.GuildId);
+        await cache.RemoveAsync(CacheKeys.GuildConfig(command.GuildId));
         return $"✅ Added `{normalized}` to allowed links";
     }
 }

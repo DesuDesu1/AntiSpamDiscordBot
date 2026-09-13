@@ -2,12 +2,13 @@ using AntiSpam.Bot.Common;
 using AntiSpam.Bot.Data;
 using AntiSpam.Bot.Infrastructure.Cache;
 using Mediator;
+using ZiggyCreatures.Caching.Fusion;
 
 namespace AntiSpam.Bot.Features.GuildManagement.Config;
 
 public sealed record SetDeleteMessagesCommand(ulong GuildId, bool Enabled) : ICommand<string>;
 
-public sealed class SetDeleteMessagesHandler(BotDbContext db, GuildConfigCache cache)
+public sealed class SetDeleteMessagesHandler(BotDbContext db, IFusionCache cache)
     : ICommandHandler<SetDeleteMessagesCommand, string>
 {
     public async ValueTask<string> Handle(SetDeleteMessagesCommand command, CancellationToken ct)
@@ -16,7 +17,7 @@ public sealed class SetDeleteMessagesHandler(BotDbContext db, GuildConfigCache c
 
         config.SetDeleteMessages(command.Enabled);
         await db.SaveChangesAsync(ct);
-        await cache.InvalidateAsync(command.GuildId);
+        await cache.RemoveAsync(CacheKeys.GuildConfig(command.GuildId));
         return command.Enabled ? "✅ Auto-delete spam enabled" : "❌ Auto-delete spam disabled";
     }
 }

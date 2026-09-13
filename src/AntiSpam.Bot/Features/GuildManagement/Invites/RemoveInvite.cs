@@ -5,13 +5,14 @@ using AntiSpam.Bot.Domain.SpamDetection;
 using AntiSpam.Bot.Infrastructure.Cache;
 using AntiSpam.Bot.Infrastructure.Discord;
 using Mediator;
+using ZiggyCreatures.Caching.Fusion;
 
 namespace AntiSpam.Bot.Features.GuildManagement.Invites;
 
 /// <param name="Invite">An invite link/code to the server, or its raw guild id (so it can be removed even after the invite expires).</param>
 public sealed record RemoveInviteCommand(ulong GuildId, string Invite) : ICommand<string>;
 
-public sealed class RemoveInviteHandler(BotDbContext db, GuildConfigCache cache, DiscordService discord)
+public sealed class RemoveInviteHandler(BotDbContext db, IFusionCache cache, DiscordService discord)
     : ICommandHandler<RemoveInviteCommand, string>
 {
     public async ValueTask<string> Handle(RemoveInviteCommand command, CancellationToken ct)
@@ -21,7 +22,7 @@ public sealed class RemoveInviteHandler(BotDbContext db, GuildConfigCache cache,
         var config = await db.GuildConfigs.GetOrCreateAsync(command.GuildId, ct);
         var name = config.RemoveInviteServer(guildId);
         await db.SaveChangesAsync(ct);
-        await cache.InvalidateAsync(command.GuildId);
+        await cache.RemoveAsync(CacheKeys.GuildConfig(command.GuildId));
         return $"✅ Removed **{name}** from the invite allow-list";
     }
 

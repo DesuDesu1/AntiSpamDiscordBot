@@ -1,8 +1,5 @@
 namespace AntiSpam.Bot.Domain.SpamDetection;
 
-/// <summary>
-/// Uses Jaccard similarity
-/// </summary>
 public static class TextSimilarity
 {
     private const int DefaultShingleSize = 3;
@@ -13,10 +10,7 @@ public static class TextSimilarity
 
         return JaccardIndex(shingles1, shingles2);
     }
-
-    /// <summary>
-    /// Jaccard index = |A ∩ B| / |A ∪ B|
-    /// </summary>
+    
     private static double JaccardIndex(HashSet<string> set1, HashSet<string> set2)
     {
         if (set1.Count == 0 && set2.Count == 0)
@@ -59,10 +53,10 @@ public static class TextSimilarity
 
         var normalized = content
             .ToLowerInvariant()
-            .Replace('​', ' ')  // zero-width space
-            .Replace('‌', ' ')  // zero-width non-joiner
-            .Replace('‍', ' ')  // zero-width joiner
-            .Replace('﻿', ' '); // BOM
+            .Replace('​', ' ')
+            .Replace('‌', ' ')
+            .Replace('‍', ' ')
+            .Replace('﻿', ' ');
 
         return string.Join(' ', normalized.Split(default(char[]), StringSplitOptions.RemoveEmptyEntries));
     }

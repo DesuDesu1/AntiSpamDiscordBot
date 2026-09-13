@@ -29,31 +29,16 @@ spec:
                 configMapKeyRef:
                   name: {{ .Release.Name }}-config
                   key: KAFKA_BOOTSTRAP_SERVERS
-            - name: Redis__ConnectionString
+            - name: ConnectionStrings__Redis
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Release.Name }}-config
                   key: REDIS_CONNECTION
-            - name: Postgres__Host
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ .Release.Name }}-config
-                  key: POSTGRES_HOST
-            - name: Postgres__Database
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ .Release.Name }}-config
-                  key: POSTGRES_DATABASE
-            - name: Postgres__Username
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ .Release.Name }}-config
-                  key: POSTGRES_USERNAME
-            - name: Postgres__Password
+            - name: ConnectionStrings__Database
               valueFrom:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secrets
-                  key: postgres-password
+                  key: database-connection-string
             - name: Encryption__Key
               valueFrom:
                 secretKeyRef:

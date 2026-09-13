@@ -3,9 +3,9 @@ using AntiSpam.Bot.Domain.SpamDetection;
 
 namespace AntiSpam.Tests;
 
-public class MessageWindowTests
+public class RepostDetectorTests
 {
-    private static readonly SpamDetectionOptions Options = new() { MinChannels = 3, SimilarityThreshold = 0.7 };
+    private static GuildConfig Config() => GuildConfig.CreateDefault(1);
 
     private static CachedMessage Text(string content, ulong channel) => new(content, channel, channel, 0, 0);
     private static CachedMessage Image(ulong channel) => new("", channel, channel, 0, 1);
@@ -13,50 +13,53 @@ public class MessageWindowTests
     [Fact]
     public void Not_spam_below_min_channels()
     {
-        // Same text, but only 2 distinct channels counting the new one → below MinChannels(3).
-        var window = new MessageWindow([Text("buy now", 1)]);
-        var verdict = window.Evaluate(Text("buy now", 2), Options);
-
-        Assert.False(verdict.IsSpam);
-        Assert.Equal(SpamReason.None, verdict.Reason);
+        var detector = new RepostDetector([Text("buy now", 1)]);
+        Assert.Null(detector.Evaluate(Text("buy now", 2), Config()));
     }
 
     [Fact]
     public void Similar_text_across_min_channels_is_spam()
     {
-        var window = new MessageWindow([Text("buy cheap coins now", 1), Text("buy cheap coins now", 2)]);
-        var verdict = window.Evaluate(Text("buy cheap coins now", 3), Options);
+        var detector = new RepostDetector([Text("buy cheap coins now", 1), Text("buy cheap coins now", 2)]);
+        var verdict = detector.Evaluate(Text("buy cheap coins now", 3), Config());
 
-        Assert.True(verdict.IsSpam);
+        Assert.NotNull(verdict);
         Assert.Equal(SpamReason.SimilarText, verdict.Reason);
-        Assert.Equal(3, verdict.ChannelCount);
+        Assert.Equal(3, verdict.ChannelIds.Count);
     }
 
     [Fact]
     public void Distinct_text_is_not_similar_text_spam()
     {
-        var window = new MessageWindow([Text("hello there friends", 1), Text("totally different words", 2)]);
-        var verdict = window.Evaluate(Text("another unrelated line", 3), Options);
-        Assert.False(verdict.IsSpam);
+        var detector = new RepostDetector([Text("hello there friends", 1), Text("totally different words", 2)]);
+        Assert.Null(detector.Evaluate(Text("another unrelated line", 3), Config()));
     }
 
     [Fact]
     public void Attachments_across_min_channels_is_attachment_spam()
     {
-        var window = new MessageWindow([Image(1), Image(2)]);
-        var verdict = window.Evaluate(Image(3), Options);
+        var detector = new RepostDetector([Image(1), Image(2)]);
+        var verdict = detector.Evaluate(Image(3), Config());
 
-        Assert.True(verdict.IsSpam);
+        Assert.NotNull(verdict);
         Assert.Equal(SpamReason.AttachmentSpam, verdict.Reason);
     }
 
     [Fact]
     public void Same_text_repeated_in_one_channel_is_not_spam()
     {
-        // Channel count is what matters, not message count.
-        var window = new MessageWindow([Text("spam", 1), Text("spam", 1)]);
-        var verdict = window.Evaluate(Text("spam", 1), Options);
-        Assert.False(verdict.IsSpam);
+        var detector = new RepostDetector([Text("spam", 1), Text("spam", 1)]);
+        Assert.Null(detector.Evaluate(Text("spam", 1), Config()));
+    }
+
+    [Fact]
+    public void Raised_min_channels_is_honoured()
+    {
+        var config = GuildConfig.CreateDefault(1);
+        config.SetMinChannels(4);
+
+        var detector = new RepostDetector([Text("buy now", 1), Text("buy now", 2)]);
+        Assert.Null(detector.Evaluate(Text("buy now", 3), config));
     }
 }
 

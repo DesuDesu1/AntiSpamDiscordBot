@@ -3,13 +3,14 @@ using AntiSpam.Bot.Data;
 using AntiSpam.Bot.Infrastructure.Cache;
 using Discord.Rest;
 using Mediator;
+using ZiggyCreatures.Caching.Fusion;
 
 namespace AntiSpam.Bot.Features.GuildManagement.Config;
 
 /// <param name="Channel">Discord channel id (the `channel` slash option, resolved to its id by Gateway).</param>
 public sealed record SetAlertChannelCommand(ulong GuildId, ulong Channel) : ICommand<string>;
 
-public sealed class SetAlertChannelHandler(BotDbContext db, GuildConfigCache cache, DiscordRestClient discord)
+public sealed class SetAlertChannelHandler(BotDbContext db, IFusionCache cache, DiscordRestClient discord)
     : ICommandHandler<SetAlertChannelCommand, string>
 {
     public async ValueTask<string> Handle(SetAlertChannelCommand command, CancellationToken ct)
@@ -18,7 +19,7 @@ public sealed class SetAlertChannelHandler(BotDbContext db, GuildConfigCache cac
 
         config.SetAlertChannel(command.Channel);
         await db.SaveChangesAsync(ct);
-        await cache.InvalidateAsync(command.GuildId);
+        await cache.RemoveAsync(CacheKeys.GuildConfig(command.GuildId));
 
         try
         {
