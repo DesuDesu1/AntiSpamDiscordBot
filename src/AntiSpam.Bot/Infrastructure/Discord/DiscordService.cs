@@ -19,7 +19,12 @@ public class DiscordService
     private readonly IFusionCache _cache;
 
     private static readonly FusionCacheEntryOptions ChannelCacheOptions =
-        new(TimeSpan.FromMinutes(5)) { SkipDistributedCache = true, SkipBackplaneNotifications = true };
+        new(TimeSpan.FromMinutes(5))
+        {
+            SkipDistributedCacheRead = true,
+            SkipDistributedCacheWrite = true,
+            SkipBackplaneNotifications = true
+        };
 
     public DiscordService(
         DiscordRestClient client,

@@ -151,26 +151,21 @@ public sealed class DetectSpamHandler : ICommandHandler<DetectSpamCommand>
 
     private async Task<Detection?> RecordAndDetectRepostAsync(MessageReceivedEvent message, GuildConfig config)
     {
-        var options = new SpamDetectionOptions
-        {
-            MinChannels = config.MinChannelsForSpam,
-            SimilarityThreshold = config.SimilarityThreshold,
-            Window = TimeSpan.FromSeconds(config.DetectionWindowSeconds)
-        };
+        var window = TimeSpan.FromSeconds(config.DetectionWindowSeconds);
 
-        var recentMessages = await _messageRepository.GetInWindowAsync(message.GuildId, message.AuthorId, options.Window);
+        var recentMessages = await _messageRepository.GetInWindowAsync(message.GuildId, message.AuthorId, window);
         var newMessage = new CachedMessage(
             message.Content, message.ChannelId, message.MessageId,
             message.Timestamp.ToUnixTimeSeconds(), message.AttachmentCount);
-        await _messageRepository.AddAsync(message.GuildId, message.AuthorId, newMessage, options.Window);
+        await _messageRepository.AddAsync(message.GuildId, message.AuthorId, newMessage, window);
 
-        var verdict = new MessageWindow(recentMessages).Evaluate(newMessage, options);
-        if (!verdict.IsSpam)
+        var verdict = new RepostDetector(recentMessages).Evaluate(newMessage, config);
+        if (verdict is null)
             return null;
 
         _logger.LogWarning(
             "SPAM DETECTED: User {User} ({Id}) - {Channels} channels, reason: {Reason}, similarity: {Similarity:P0}",
-            message.AuthorUsername, message.AuthorId, verdict.ChannelCount, verdict.Reason, verdict.MaxSimilarity);
+            message.AuthorUsername, message.AuthorId, verdict.ChannelIds.Count, verdict.Reason, verdict.MaxSimilarity);
 
         return new Detection(
             message.Content,
